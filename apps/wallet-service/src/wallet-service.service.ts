@@ -15,11 +15,20 @@ export class WalletService {
   private readonly logger = new Logger(WalletService.name);
 
   async addWallet(request: AddWalletRequestDto): Promise<AddWalletResponseDto> {
-    // Validación simple de entrada
-    if (!request.email && !request.accountId) {
-      throw new Error('Email or accountId is required');
+
+    this.logger.log(request);
+    if (!request.email || !request.accountId || !request.userId) {
+      throw new Error('Email, accountId ans userId are required');
     }
 
+
+    return {
+      userId: request.userId!,
+      email: request.email!,
+      accountId: request.accountId!,
+      address: "0x00000000"
+    };
+    /*
     // Preparar el init data para el Safe
     const safeInterface: Interface = new Interface([
       'function setup(address[] owners,uint256 threshold,address to,bytes data,address fallbackHandler,address paymentToken,uint256 payment,address payable paymentReceiver)'
@@ -69,5 +78,6 @@ export class WalletService {
       accountId: request.accountId!,
       proxy: proxyAddress
     };
+    */
   }
 }

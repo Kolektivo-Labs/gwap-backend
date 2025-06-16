@@ -11,12 +11,12 @@ export class WalletServiceController {
   async addWallet(
     @Body() body: AddWalletRequestDto
   ): Promise<{ message: string; data: AddWalletResponseDto }> {
-    const { email = null, accountId = null } = body;
+    const { email = null, accountId = null, userId = null } = body;
 
     try {
-      const result = await this.walletService.addWallet({ email, accountId });
+      const result = await this.walletService.addWallet({ email, accountId, userId });
       return {
-        message: 'Wallet agregada correctamente',
+        message: 'Success',
         data: result,
       };
     } catch (error) {
