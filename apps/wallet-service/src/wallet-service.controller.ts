@@ -1,12 +1,26 @@
-import { Controller, Get } from '@nestjs/common';
-import { WalletServiceService } from './wallet-service.service';
+import { Controller, Post, Body, BadRequestException } from '@nestjs/common';
+import { WalletService } from './wallet-service.service';
+import { AddWalletRequestDto } from './dto/add-wallet.dto';
+import { AddWalletResponseDto } from './dto/add-wallet.dto';
 
 @Controller()
 export class WalletServiceController {
-  constructor(private readonly walletServiceService: WalletServiceService) {}
+  constructor(private readonly walletService: WalletService) { }
 
-  @Get()
-  getHello(): string {
-    return this.walletServiceService.getHello();
+  @Post('addWallet')
+  async addWallet(
+    @Body() body: AddWalletRequestDto
+  ): Promise<{ message: string; data: AddWalletResponseDto }> {
+    const { email = null, accountId = null } = body;
+
+    try {
+      const result = await this.walletService.addWallet({ email, accountId });
+      return {
+        message: 'Wallet agregada correctamente',
+        data: result,
+      };
+    } catch (error) {
+      throw new BadRequestException(error.message);
+    }
   }
 }
