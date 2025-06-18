@@ -13,14 +13,6 @@ import { AddWalletRequestDto, AddWalletResponseDto } from './dto/add-wallet.dto'
 import { Pool } from 'pg';
 import SafeProxyFactoryAbi from './abi.json';
 
-const pgClient = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-const OP_FACTORY = '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC';
-const SINGLETON = '0x3E5c63644E683549055b9Be8653de26E0B4CD36E';
-const REGISTRY = '0xaE00377a40B8b14e5f92E28A945c7DdA615b2B46';
-const OWNER_SAFE = process.env.MAIN_SAFE!;
 
 
 @Injectable()
@@ -52,6 +44,11 @@ export class WalletService {
       this.logger.error('Safe creation failed', error);
       throw new Error('Failed to create Safe Smart Account');
     }
+    const pgClient = new Pool({
+      connectionString: process.env.DATABASE_URL,
+    });
+
+
 
     const client = await pgClient.connect();
 
@@ -91,7 +88,12 @@ export class WalletService {
   }
 
   async createSafeProxy(): Promise<string> {
-    if (!OWNER_SAFE) {
+    const OP_FACTORY = '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC';
+    const SINGLETON = '0x3E5c63644E683549055b9Be8653de26E0B4CD36E';
+    const REGISTRY = '0xaE00377a40B8b14e5f92E28A945c7DdA615b2B46';
+    const OWNER_SAFE = process.env.MAIN_SAFE!;
+
+    if (!OWNER_SAFE || !CFG.pk) {
       if (process.env.NODE_ENV === 'production') {
         throw new Error('Missing OWNER_SAFE env var');
       }
