@@ -10,15 +10,15 @@ bootstrap();
 
 import 'dotenv/config'
 
-function env(name: string): string {
+function env(name: string): string | undefined {
   const v = process.env[name]
-  if (!v) throw new Error(`Missing env: ${name}`)
+  if (!v) console.error(`Missing env: ${name}`)
   return v
 }
 
 export const CFG = {
-  rpc:       env('RPC_URL'),
-  pk:        env('RELAYER_PK'),
-  mainSafe:  env('MAIN_SAFE'),
-  chainId:   10  // Optimism
+  rpc: env('RPC_URL'),
+  pk: env('RELAYER_PK'),
+  mainSafe: env('MAIN_SAFE'),
+  chainId: 10  // Optimism
 }
