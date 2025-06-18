@@ -117,10 +117,12 @@ export class WalletService {
       ZeroAddress,
     ]);
 
+    const abi = (SafeProxyFactoryAbi as any).default ?? SafeProxyFactoryAbi;
     const provider = new JsonRpcProvider(CFG.rpc, CFG.chainId);
     const signer = new Wallet(CFG.pk, provider);
     const saltNonce = Date.now().toString();
-    const factory = new Contract(OP_FACTORY, SafeProxyFactoryAbi, signer);
+    const factory = new Contract(OP_FACTORY, abi, signer);
+    
 
     try {
       this.logger.log('Sending Safe proxy creation tx...');
