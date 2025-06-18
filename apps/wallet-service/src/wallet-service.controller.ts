@@ -1,4 +1,4 @@
-import { Controller, Post, Body, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Body, BadRequestException, Get } from '@nestjs/common';
 import { WalletService } from './wallet-service.service';
 import { AddWalletRequestDto } from './dto/add-wallet.dto';
 import { AddWalletResponseDto } from './dto/add-wallet.dto';
@@ -22,5 +22,10 @@ export class WalletServiceController {
     } catch (error) {
       throw new BadRequestException(error.message);
     }
+  }
+
+  @Get()
+  getHello() {
+    return { message: 'Wallet-service is alive' };
   }
 }
