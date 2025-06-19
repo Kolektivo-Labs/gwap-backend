@@ -1,10 +1,20 @@
 import { Module } from '@nestjs/common';
-import { DepositListenerController } from './deposit-listener.controller';
-import { DepositListenerService } from './deposit-listener.service';
+import { DepositConfirmationService } from './deposit-confirmation/deposit-confirmation.service';
+import { DepositSenderService } from './deposit-sender/deposit-sender.service';
+import { DepositFetcherService } from './deposit-fetcher/deposit-fetcher.service';
+import { DatabaseService } from './common/database.service';
 
 @Module({
-  imports: [],
-  controllers: [DepositListenerController],
-  providers: [DepositListenerService],
+  providers: [
+    DatabaseService,
+    DepositFetcherService,
+    DepositConfirmationService,
+    DepositSenderService,
+  ],
+  exports: [
+    DatabaseService,
+    DepositConfirmationService,
+    DepositSenderService,
+  ],
 })
-export class DepositListenerModule {}
+export class DepositListenerModule { }
