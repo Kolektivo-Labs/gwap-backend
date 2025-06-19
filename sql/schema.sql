@@ -10,19 +10,23 @@ CREATE TABLE wallets (
   user_id TEXT NOT NULL,
   deposit_addr TEXT NOT NULL,
   chain_id INTEGER NOT NULL,
-  PRIMARY KEY (user_id, deposit_addr, chain_id),
+  PRIMARY KEY (deposit_addr, chain_id),
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
 -- deposits
 CREATE TABLE deposits (
   tx_hash TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  amount_usd NUMERIC(18, 2) NOT NULL,
+  deposit_addr TEXT NOT NULL,
+  chain_id INTEGER NOT NULL,
+  amount_usd TEXT NOT NULL,
+  gas_used TEXT NOT NULL,
+  block_number BIGINT NOT NULL,
   confirmed BOOLEAN DEFAULT FALSE,
-  settled BOOLEAN DEFAULT FALSE,
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+  settled BOOLEAN DEFAULT FALSE,  
+  FOREIGN KEY (deposit_addr,chain_id ) REFERENCES wallets(deposit_addr,chain_id) ON DELETE CASCADE
 );
+
 
 -- balances
 CREATE TABLE balances (
@@ -40,3 +44,6 @@ CREATE TABLE settlements (
   wire_ref TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
+CREATE INDEX idx_deposits_confirmed ON deposits (confirmed);
+CREATE INDEX idx_deposits_settled ON deposits (settled);
+CREATE INDEX idx_deposits_block_number ON deposits (block_number);
