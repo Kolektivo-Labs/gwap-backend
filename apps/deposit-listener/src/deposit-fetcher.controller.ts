@@ -10,6 +10,14 @@ export class DepositListenerController {
     private readonly depositSenderService: DepositSenderService
   ) { }
 
+  @Get()
+  async listen(): Promise<string> {
+    await this.depositListenerService.syncDeposits();
+    await this.depositConfirmationService.confirmDeposits();
+    await this.depositSenderService.sendConfirmedDeposits();
+    return 'Listen done';
+  }
+
   @Get('fetch')
   async fetch(): Promise<string> {
     await this.depositListenerService.syncDeposits();
