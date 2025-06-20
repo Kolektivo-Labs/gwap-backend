@@ -3,10 +3,7 @@ import { Pool } from 'pg';
 import { ethers } from 'ethers';
 import 'dotenv/config';
 import { DatabaseService } from '../common/database.service';
-
-
-
-const provider = new ethers.JsonRpcProvider(process.env.ALCHEMY_RPC_URL);
+import { Alchemy, Network } from 'alchemy-sdk';
 
 @Injectable()
 export class DepositConfirmationService {
@@ -15,9 +12,14 @@ export class DepositConfirmationService {
     constructor(private readonly db: DatabaseService) { }
 
     async confirmDeposits(minConfirmations: number = 5): Promise<void> {
-        const currentBlock = await provider.getBlockNumber();
 
-        const res = await this.db.pool.pgClient.query<{ tx_hash: string }>(`
+        const alchemy = new Alchemy({
+            apiKey: process.env.ALCHEMY_PRIVATE_KEY!,
+            network: Network.OPT_MAINNET,
+        });
+        const currentBlock = await alchemy.core.getBlockNumber();
+
+        const res = await this.db.pool.query<{ tx_hash: string }>(`
       SELECT tx_hash FROM deposits WHERE confirmed = false
     `);
 
@@ -32,7 +34,7 @@ export class DepositConfirmationService {
             const txHash = row.tx_hash;
 
             try {
-                const receipt = await provider.getTransactionReceipt(txHash);
+                const receipt = await alchemy.core.getTransactionReceipt(txHash);
 
                 if (!receipt || !receipt.blockNumber || !receipt.gasUsed) {
                     this.logger.debug(`Tx ${txHash} not yet confirmed or reorged out.`);
@@ -43,7 +45,7 @@ export class DepositConfirmationService {
                 if (confirmations >= minConfirmations) {
                     const gasUsed = receipt.gasUsed.toString();
 
-                    await this.db.pool.pgClient.query(
+                    await this.db.pool.query(
                         `UPDATE deposits SET confirmed = true, gas_used = $1 WHERE tx_hash = $2`,
                         [gasUsed, txHash]
                     );

@@ -11,7 +11,7 @@ import { DatabaseService } from '../common/database.service';
 export class DepositFetcherService {
   private readonly logger = new Logger(DepositFetcherService.name);
 
-  constructor(private readonly http: HttpService, private readonly db: DatabaseService) { }
+  constructor(private readonly db: DatabaseService) { }
 
   async syncDeposits() {
     const wallets = await this.getWalletsFromOptimism();
@@ -43,15 +43,15 @@ export class DepositFetcherService {
   }
 
   private async getWalletsFromOptimism(): Promise<{ user_id: string; deposit_addr: string }[]> {
-    const res = await this.db.pool.pgClient.query(
+    const res = await this.db.pool.query(
       'SELECT user_id, deposit_addr FROM wallets WHERE chain_id = 10',
     );
     return res.rows;
   }
 
   private async getLastSyncedBlockNumber(): Promise<`0x${string}`> {
-    const res = await this.db.pool.pgClient.query(
-      'SELECT COALESCE(MAX(block_number), 0) AS last FROM deposits',
+    const res = await this.db.pool.query(
+      'SELECT COALESCE(MIN(block_number), 0) AS last FROM deposits',
     );
     return `0x${Number(res.rows[0].last).toString(16)}`;
   }
@@ -65,15 +65,20 @@ export class DepositFetcherService {
     };
 
     const alchemy = new Alchemy(settings);
+    console.log(`Fetching transfers after : ${after}`);
+
     const results = await Promise.all(
       addresses.map(async (address) => {
+
         const result = await alchemy.core.getAssetTransfers({
           fromBlock: after,
           toAddress: address,
           excludeZeroValue: true,
           category: [AssetTransfersCategory.ERC20],
-          contractAddresses: ['0x7F5c764cBc14f9669B88837ca1490cCa17c31607'],
+          contractAddresses: ['0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85'],
         });
+        console.dir(result.transfers, { depth: null });
+        console.log(`Fetched transfers for address: ${address}`);
         return result.transfers;
       })
     );
@@ -86,7 +91,7 @@ export class DepositFetcherService {
     const hashes = transfers.map(d => `'${d.hash}'`).join(',');
     if (hashes.length === 0) return transfers;
 
-    const res = await this.db.pool.pgClient.query<{ tx_hash: string }>(
+    const res = await this.db.pool.query<{ tx_hash: string }>(
       `SELECT tx_hash FROM deposits WHERE tx_hash IN (${hashes})`,
     );
     const existing = new Set(res.rows.map(r => r.tx_hash));
@@ -111,7 +116,7 @@ export class DepositFetcherService {
       const blockNumber = parseInt(t.blockNum, 16);
 
       values.push(
-        `('${t.hash.replace(/'/g, "''")}', '${depositAddr}', 10, ${amount}, FALSE, FALSE, ${blockNumber})`
+        `('${t.hash.replace(/'/g, "''")}', '${depositAddr}', 10, ${amount}, FALSE, FALSE, ${blockNumber}, 0)`
       );
 
     }
@@ -119,10 +124,10 @@ export class DepositFetcherService {
     if (values.length === 0) return;
 
     const sql = `
-    INSERT INTO deposits (tx_hash, deposit_addr, chain_id, amount_usd, confirmed, settled, block_number)
+    INSERT INTO deposits (tx_hash, deposit_addr, chain_id, amount_usd, confirmed, settled, block_number, gas_used)
     VALUES ${values.join(', ')}
   `;
-    await this.db.pool.pgClient.query(sql);
+    await this.db.pool.query(sql);
   }
 
 }

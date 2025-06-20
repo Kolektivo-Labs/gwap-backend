@@ -1,18 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { DepositFetcherController } from './deposit-fetcher.controller';
-import { DepositFetcherService } from './deposit-fetcher.service';
+import { DepositFetcherService } from './deposit-fetcher/deposit-fetcher.service';
+import { DepositListenerController } from './deposit-fetcher.controller';
 
 
 describe('DepositFetcherController', () => {
-  let depositFetcherController: DepositFetcherController;
+  let depositFetcherController: DepositListenerController;
 
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
-      controllers: [DepositFetcherController],
+      controllers: [DepositListenerController],
       providers: [DepositFetcherService],
     }).compile();
 
-    depositFetcherController = app.get<DepositFetcherController>(DepositFetcherController);
+    depositFetcherController = app.get<DepositListenerController>(DepositListenerController);
   });
 
   describe('root', () => {

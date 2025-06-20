@@ -18,7 +18,7 @@ export class DepositSenderService {
       email: string;
       account: string;
     }>(`
-      SELECT d.tx_hash, d.deposit_addr, d.amount_usd, d.gas_used u.email, u.girasol_account_id AS account
+      SELECT d.tx_hash, d.deposit_addr, d.amount_usd, d.gas_used, u.email, u.girasol_account_id AS account
       FROM deposits d
       JOIN wallets w ON d.deposit_addr = w.deposit_addr AND d.chain_id = w.chain_id
       JOIN users u ON w.user_id = u.user_id
@@ -31,12 +31,11 @@ export class DepositSenderService {
     }
 
     for (const row of res.rows) {
-      const amount = formatUnits(row.amount_usd, 6)
 
       const payload = {
         email: row.email,
         account: row.account,
-        amount: amount,
+        amount: Number(row.amount_usd),
         currencyCode: 840,
         merchant: 'CFX',
         paymentType: 'crypto',
@@ -71,7 +70,13 @@ export class DepositSenderService {
         }
       } catch (err) {
         await client.query('ROLLBACK');
-        this.logger.error(`Error sending deposit ${row.tx_hash}: ${err.message}`);
+        if (axios.isAxiosError(err) && err.response) {
+          this.logger.error(`Error sending deposit ${row.tx_hash}: ${err.message}`);
+          this.logger.error(`Response status: ${err.response.status}`);
+          this.logger.error(`Response body: ${JSON.stringify(err.response.data)}`);
+        } else {
+          this.logger.error(`Unexpected error for deposit ${row.tx_hash}: ${err.message}`);
+        }
       } finally {
         client.release();
       }

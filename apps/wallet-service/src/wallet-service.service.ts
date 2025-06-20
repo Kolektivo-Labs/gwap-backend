@@ -40,6 +40,7 @@ export class WalletService {
     let proxyAddress: string;
     try {
       proxyAddress = await this.createSafeProxy();
+      proxyAddress = proxyAddress.toLowerCase();
     } catch (error: any) {
       this.logger.error('Safe creation failed', error);
       throw new Error('Failed to create Safe Smart Account');
@@ -122,7 +123,7 @@ export class WalletService {
     const signer = new Wallet(CFG.pk, provider);
     const saltNonce = Date.now().toString();
     const factory = new Contract(OP_FACTORY, abi, signer);
-    
+
 
     try {
       this.logger.log('Sending Safe proxy creation tx...');
