@@ -5,6 +5,7 @@ import { DepositFetcherService } from './deposit-fetcher/deposit-fetcher.service
 import { DatabaseService } from './common/database.service';
 import { HttpModule } from '@nestjs/axios';
 import { DepositListenerController } from './deposit-fetcher.controller';
+import { TokenSweeperService } from './token-sweep/token-sweep.service';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { DepositListenerController } from './deposit-fetcher.controller';
     DepositFetcherService,
     DepositConfirmationService,
     DepositSenderService,
+    TokenSweeperService,
   ],
   exports: [
     DatabaseService,

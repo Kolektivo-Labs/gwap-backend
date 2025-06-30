@@ -24,6 +24,7 @@ CREATE TABLE deposits (
   block_number BIGINT NOT NULL,
   confirmed BOOLEAN DEFAULT FALSE,
   settled BOOLEAN DEFAULT FALSE,  
+  settlement_hash TEXT,
   FOREIGN KEY (deposit_addr,chain_id ) REFERENCES wallets(deposit_addr,chain_id) ON DELETE CASCADE
 );
 

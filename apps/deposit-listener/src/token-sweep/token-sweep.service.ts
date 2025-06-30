@@ -68,13 +68,13 @@ export class TokenSweeperService implements OnModuleInit {
 
 
   /** Sweep every USDT in `proxySafe` to MAIN_SAFE.  Idempotent. */
-  async sweepProxySafe(proxySafe: string): Promise<void> {
+  async sweepProxySafe(proxySafe: string): Promise<string | null> {
     proxySafe = ethers.getAddress(proxySafe); // checksum
     const bal: bigint = await this.usdt.balanceOf(proxySafe);
 
     if (bal === 0n) {
       this.logger.log(`[${proxySafe}] balance is zero — nothing to sweep`);
-      return;
+      return null;
     }
     this.logger.log(
       `[${proxySafe}] sweeping ${ethers.formatUnits(bal, 6)} USDT → MAIN_SAFE`,
@@ -90,10 +90,15 @@ export class TokenSweeperService implements OnModuleInit {
       safeAddress: proxySafe,
     });
 
+    this.logger.log(
+      `[${this.MAIN_SAFE}] Receiving ${ethers.formatUnits(bal, 6)} USDC`,
+    );
+
+
     const transferTx: MetaTransactionData = {
       to: TOKEN,
       value: '0',
-      data: ERC20.encodeFunctionData('transfer', [this.mainSafeSdk.getAddress(), bal]),
+      data: ERC20.encodeFunctionData('transfer', [this.MAIN_SAFE, bal]),
       operation: OperationType.Call,
     };
     const safeTx: SafeTransaction = await proxySdk.createTransaction({
@@ -144,5 +149,6 @@ export class TokenSweeperService implements OnModuleInit {
     const sent2 = await this.mainSafeSdk.executeTransaction(execTx);
     const rc = await (sent2.transactionResponse as ethers.TransactionResponse).wait();
     this.logger.log(`[${proxySafe}] sweep complete – tx ${rc!.hash}`);
+    return rc!.hash;
   }
 }

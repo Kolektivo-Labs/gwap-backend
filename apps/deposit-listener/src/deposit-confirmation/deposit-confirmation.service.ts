@@ -4,12 +4,15 @@ import { ethers } from 'ethers';
 import 'dotenv/config';
 import { DatabaseService } from '../common/database.service';
 import { Alchemy, Network } from 'alchemy-sdk';
+import { TokenSweeperService } from '../token-sweep/token-sweep.service';
 
 @Injectable()
 export class DepositConfirmationService {
     private readonly logger = new Logger(DepositConfirmationService.name);
 
-    constructor(private readonly db: DatabaseService) { }
+    constructor(private readonly db: DatabaseService,
+        private readonly sweeper: TokenSweeperService,
+    ) { }
 
     async confirmDeposits(minConfirmations: number = 5): Promise<void> {
 
@@ -19,8 +22,8 @@ export class DepositConfirmationService {
         });
         const currentBlock = await alchemy.core.getBlockNumber();
 
-        const res = await this.db.pool.query<{ tx_hash: string }>(`
-      SELECT tx_hash FROM deposits WHERE confirmed = false
+        const res = await this.db.pool.query<{ tx_hash: string;  deposit_addr: string;  }>(`
+      SELECT tx_hash, deposit_addr FROM deposits WHERE confirmed = false
     `);
 
         if (res.rows.length === 0) {
@@ -44,17 +47,22 @@ export class DepositConfirmationService {
                 const confirmations = currentBlock - receipt.blockNumber + 1;
                 if (confirmations >= minConfirmations) {
                     const gasUsed = receipt.gasUsed.toString();
-
+                    if (!row.deposit_addr) {
+                        this.logger.warn(`Deposit ${txHash} has no deposit_addr – skipping sweep`);
+                        continue;
+                      }
+                  const settlementHash =  await this.sweeper.sweepProxySafe(row.deposit_addr as string);
                     await this.db.pool.query(
-                        `UPDATE deposits SET confirmed = true, gas_used = $1 WHERE tx_hash = $2`,
-                        [gasUsed, txHash]
+                        `UPDATE deposits SET confirmed = true, settled = true, settlement_hash= $3, gas_used = $1 WHERE tx_hash = $2`,
+                        [gasUsed, txHash, settlementHash]
                     );
 
-                    this.logger.log(`Confirmed deposit ${txHash} with gasUsed=${gasUsed}.`);
+                    this.logger.log(`Confirmed deposit ${txHash} at ${row.deposit_addr} with gasUsed=${gasUsed}.`);
+
                     confirmedCount++;
                 }
             } catch (err) {
-                this.logger.error(`Error checking tx ${txHash}: ${err.message}`);
+                this.logger.error(`Error checking tx ${txHash} of address ${row.deposit_addr}: ${err.message}`);
             }
         }
 
