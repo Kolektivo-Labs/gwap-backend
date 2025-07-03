@@ -23,7 +23,7 @@ export class DepositConfirmationService {
         const currentBlock = await alchemy.core.getBlockNumber();
 
         const res = await this.db.pool.query<{ tx_hash: string;  deposit_addr: string;  }>(`
-      SELECT tx_hash, deposit_addr FROM deposits WHERE confirmed = false
+      SELECT tx_hash, deposit_addr FROM deposits WHERE confirmed = false AND swept= false  
     `);
 
         if (res.rows.length === 0) {
@@ -47,14 +47,9 @@ export class DepositConfirmationService {
                 const confirmations = currentBlock - receipt.blockNumber + 1;
                 if (confirmations >= minConfirmations) {
                     const gasUsed = receipt.gasUsed.toString();
-                    if (!row.deposit_addr) {
-                        this.logger.warn(`Deposit ${txHash} has no deposit_addr – skipping sweep`);
-                        continue;
-                      }
-                  const settlementHash =  await this.sweeper.sweepProxySafe(row.deposit_addr as string);
                     await this.db.pool.query(
-                        `UPDATE deposits SET confirmed = true, settled = true, settlement_hash= $3, gas_used = $1 WHERE tx_hash = $2`,
-                        [gasUsed, txHash, settlementHash]
+                        `UPDATE deposits SET confirmed=true, gas_used = $1 WHERE tx_hash = $2`,
+                        [gasUsed, txHash]
                     );
 
                     this.logger.log(`Confirmed deposit ${txHash} at ${row.deposit_addr} with gasUsed=${gasUsed}.`);
@@ -65,6 +60,24 @@ export class DepositConfirmationService {
                 this.logger.error(`Error checking tx ${txHash} of address ${row.deposit_addr}: ${err.message}`);
             }
         }
+
+        const unswept = await this.db.pool.query<{ tx_hash: string;  deposit_addr: string;  }>(`
+            SELECT tx_hash, deposit_addr FROM deposits WHERE confirmed = true AND swept = false
+          `);
+
+          let sweptCount = 0;
+          for(const row of unswept.rows){
+            const txHash = row.tx_hash
+        const settlementHash =  await this.sweeper.sweepProxySafe(row.deposit_addr as string);
+        await this.db.pool.query(
+            `UPDATE deposits SET swept=true, settlement_hash= $2 WHERE tx_hash = $1`,
+            [ txHash, settlementHash]
+        )
+        sweptCount += settlementHash ? 1 : 0;
+    }
+    this.logger.log(
+        `★ newly-confirmed: ${confirmedCount}, swept: ${sweptCount}`,
+      );
 
         if (confirmedCount === 0) {
             this.logger.log('No deposits reached confirmation threshold.');
