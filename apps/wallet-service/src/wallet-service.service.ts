@@ -12,11 +12,20 @@ import { CFG } from './main';
 import { AddWalletRequestDto, AddWalletResponseDto } from './dto/add-wallet.dto';
 import { Pool } from 'pg';
 import SafeProxyFactoryAbi from './abi.json';
+import { MetricsService } from './metrics.service';
 
 
 
 @Injectable()
 export class WalletService {
+  constructor(
+
+    private readonly metricsService: MetricsService
+  ) { }
+
+  
+
+
   private readonly logger = new Logger(WalletService.name);
 
   async addWallet(request: AddWalletRequestDto): Promise<AddWalletResponseDto> {
@@ -143,6 +152,7 @@ export class WalletService {
       return proxyAddress;
     } catch (err) {
       this.logger.error('Safe deployment failed', err);
+      this.metricsService.walletDeployFailCounter.inc();
       throw new Error('Safe proxy creation failed');
     }
   }

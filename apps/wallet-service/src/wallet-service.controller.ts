@@ -1,11 +1,12 @@
-import { Controller, Post, Body, BadRequestException, Get, NotFoundException, Param } from '@nestjs/common';
+import { Controller, Post, Body, BadRequestException, Get, NotFoundException, Param, Header } from '@nestjs/common';
 import { WalletService } from './wallet-service.service';
 import { AddWalletRequestDto } from './dto/add-wallet.dto';
 import { AddWalletResponseDto } from './dto/add-wallet.dto';
+import { globalRegistry, MetricsService } from './metrics.service';
 
 @Controller()
 export class WalletServiceController {
-  constructor(private readonly walletService: WalletService) { }
+  constructor(private readonly walletService: WalletService, private readonly metricsService: MetricsService) { }
 
   @Post('addWallet')
   async addWallet(
@@ -34,4 +35,12 @@ export class WalletServiceController {
 
     return wallet;
   }
+
+  @Get('metrics')
+  @Header('Content-Type', globalRegistry.contentType)
+  async getMetrics(): Promise<string> {
+    return this.metricsService.getMetrics();
+  }
+
+
 }
