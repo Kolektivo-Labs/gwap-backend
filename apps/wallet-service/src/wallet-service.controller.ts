@@ -1,4 +1,4 @@
-import { Controller, Post, Body, BadRequestException, Get } from '@nestjs/common';
+import { Controller, Post, Body, BadRequestException, Get, NotFoundException, Param } from '@nestjs/common';
 import { WalletService } from './wallet-service.service';
 import { AddWalletRequestDto } from './dto/add-wallet.dto';
 import { AddWalletResponseDto } from './dto/add-wallet.dto';
@@ -24,8 +24,14 @@ export class WalletServiceController {
     }
   }
 
-  @Get()
-  getHello() {
-    return { message: 'Wallet-service is alive' };
+  @Get('wallet/:userId')
+  async getWallet(@Param('userId') userId: string): Promise<AddWalletResponseDto> {
+    const wallet = await this.walletService.getWalletByUserId(userId);
+
+    if (!wallet) {
+      throw new NotFoundException(`Wallet not found for userId: ${userId}`);
+    }
+
+    return wallet;
   }
 }
