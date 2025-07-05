@@ -5,34 +5,51 @@ import { DepositSenderService } from './deposit-sender/deposit-sender.service';
 
 @Controller()
 export class DepositListenerController {
-  constructor(private readonly depositListenerService: DepositFetcherService,
+  constructor(
+    private readonly depositListenerService: DepositFetcherService,
     private readonly depositConfirmationService: DepositConfirmationService,
     private readonly depositSenderService: DepositSenderService
-  ) { }
+  ) {}
 
   @Get()
-  async listen(): Promise<string> {
-    await this.depositListenerService.syncDeposits();
-    await this.depositConfirmationService.confirmDeposits();
-    await this.depositSenderService.sendConfirmedDeposits();
-    return 'Listen done';
+  async listen(): Promise<{ message: string }> {
+    try {
+      await this.depositListenerService.syncDeposits();
+      await this.depositConfirmationService.confirmDeposits();
+      await this.depositSenderService.sendConfirmedDeposits();
+      return { message: '✅ All steps completed successfully' };
+    } catch (error: any) {
+      return { message: `❌ Error during listen: ${error.message}` };
+    }
   }
 
   @Get('fetch')
-  async fetch(): Promise<string> {
-    await this.depositListenerService.syncDeposits();
-    return 'Deposit sync done';
+  async fetch(): Promise<{ message: string }> {
+    try {
+      await this.depositListenerService.syncDeposits();
+      return { message: '✅ Deposit sync completed successfully' };
+    } catch (error: any) {
+      return { message: `❌ Error during fetch: ${error.message}` };
+    }
   }
 
   @Get('confirm')
-  async confirm(): Promise<string> {
-    await this.depositConfirmationService.confirmDeposits();
-    return 'Deposit confirm done';
+  async confirm(): Promise<{ message: string }> {
+    try {
+      await this.depositConfirmationService.confirmDeposits();
+      return { message: '✅ Deposit confirmation completed successfully' };
+    } catch (error: any) {
+      return { message: `❌ Error during confirmation: ${error.message}` };
+    }
   }
 
   @Get('send')
-  async syncDeposits(): Promise<string> {
-    await this.depositSenderService.sendConfirmedDeposits();
-    return 'Deposit send done';
+  async syncDeposits(): Promise<{ message: string }> {
+    try {
+      await this.depositSenderService.sendConfirmedDeposits();
+      return { message: '✅ Deposit sending completed successfully' };
+    } catch (error: any) {
+      return { message: `❌ Error during sending: ${error.message}` };
+    }
   }
 }

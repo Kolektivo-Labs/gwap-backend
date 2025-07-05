@@ -1,11 +1,12 @@
-import { Controller, Post, Body, BadRequestException, Get } from '@nestjs/common';
+import { Controller, Post, Body, BadRequestException, Get, NotFoundException, Param, Header } from '@nestjs/common';
 import { WalletService } from './wallet-service.service';
 import { AddWalletRequestDto } from './dto/add-wallet.dto';
 import { AddWalletResponseDto } from './dto/add-wallet.dto';
+import { globalRegistry, MetricsService } from './metrics.service';
 
 @Controller()
 export class WalletServiceController {
-  constructor(private readonly walletService: WalletService) { }
+  constructor(private readonly walletService: WalletService, private readonly metricsService: MetricsService) { }
 
   @Post('addWallet')
   async addWallet(
@@ -24,8 +25,22 @@ export class WalletServiceController {
     }
   }
 
-  @Get()
-  getHello() {
-    return { message: 'Wallet-service is alive' };
+  @Get('wallet/:userId')
+  async getWallet(@Param('userId') userId: string): Promise<AddWalletResponseDto> {
+    const wallet = await this.walletService.getWalletByUserId(userId);
+
+    if (!wallet) {
+      throw new NotFoundException(`Wallet not found for userId: ${userId}`);
+    }
+
+    return wallet;
   }
+
+  @Get('metrics')
+  @Header('Content-Type', globalRegistry.contentType)
+  async getMetrics(): Promise<string> {
+    return this.metricsService.getMetrics();
+  }
+
+
 }

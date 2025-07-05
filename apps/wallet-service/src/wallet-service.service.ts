@@ -12,11 +12,20 @@ import { CFG } from './main';
 import { AddWalletRequestDto, AddWalletResponseDto } from './dto/add-wallet.dto';
 import { Pool } from 'pg';
 import SafeProxyFactoryAbi from './abi.json';
+import { MetricsService } from './metrics.service';
 
 
 
 @Injectable()
 export class WalletService {
+  constructor(
+
+    private readonly metricsService: MetricsService
+  ) { }
+
+  
+
+
   private readonly logger = new Logger(WalletService.name);
 
   async addWallet(request: AddWalletRequestDto): Promise<AddWalletResponseDto> {
@@ -143,7 +152,40 @@ export class WalletService {
       return proxyAddress;
     } catch (err) {
       this.logger.error('Safe deployment failed', err);
+      this.metricsService.walletDeployFailCounter.inc();
       throw new Error('Safe proxy creation failed');
     }
   }
+
+  async getWalletByUserId(userId: string): Promise<AddWalletResponseDto | null> {
+    const pgClient = new Pool({
+      connectionString: process.env.DATABASE_URL,
+    });
+
+    const client = await pgClient.connect();
+
+    try {
+      const res = await client.query(
+        `
+      SELECT u.user_id, u.email, u.girasol_account_id as "accountId", w.deposit_addr as address
+      FROM users u
+      LEFT JOIN wallets w ON u.user_id = w.user_id
+      WHERE u.user_id = $1
+      `,
+        [userId],
+      );
+
+      if (res.rows.length === 0) {
+        return null;
+      }
+
+      return res.rows[0];
+    } catch (err) {
+      this.logger.error('Failed to fetch wallet by userId', err);
+      throw new Error('Failed to fetch wallet');
+    } finally {
+      client.release();
+    }
+  }
+
 }

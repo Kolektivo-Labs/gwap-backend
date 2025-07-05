@@ -76,8 +76,7 @@ export class DepositFetcherService {
           excludeZeroValue: true,
           category: [AssetTransfersCategory.ERC20],
           contractAddresses: ['0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85'],
-        });
-        console.dir(result.transfers, { depth: null });
+        });        
         console.log(`Fetched transfers for address: ${address}`);
         return result.transfers;
       })
