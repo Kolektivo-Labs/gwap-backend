@@ -22,7 +22,7 @@ export class DepositConfirmationService {
         });
         const currentBlock = await alchemy.core.getBlockNumber();
 
-        const res = await this.db.pool.query<{ tx_hash: string;  deposit_addr: string;  }>(`
+        const res = await this.db.pool.query<{ tx_hash: string; deposit_addr: string; }>(`
       SELECT tx_hash, deposit_addr FROM deposits WHERE confirmed = false AND swept= false  
     `);
 
@@ -61,23 +61,36 @@ export class DepositConfirmationService {
             }
         }
 
-        const unswept = await this.db.pool.query<{ tx_hash: string;  deposit_addr: string;  }>(`
+        const unswept = await this.db.pool.query<{ tx_hash: string; deposit_addr: string; }>(`
             SELECT tx_hash, deposit_addr FROM deposits WHERE confirmed = true AND swept = false
           `);
 
-          let sweptCount = 0;
-          for(const row of unswept.rows){
-            const txHash = row.tx_hash
-        const settlementHash =  await this.sweeper.sweepProxySafe(row.deposit_addr as string);
-        await this.db.pool.query(
-            `UPDATE deposits SET swept=true, settlement_hash= $2 WHERE tx_hash = $1`,
-            [ txHash, settlementHash]
-        )
-        sweptCount += settlementHash ? 1 : 0;
-    }
-    this.logger.log(
-        `★ newly-confirmed: ${confirmedCount}, swept: ${sweptCount}`,
-      );
+        let sweptCount = 0;
+        for (const row of unswept.rows) {
+            try {
+                const settlementHash = await this.sweeper.sweepProxySafe(row.deposit_addr);
+
+                const update = await this.db.pool.query(
+                    `UPDATE deposits
+         SET swept           = true,
+             settlement_hash = $2
+       WHERE tx_hash         = $1
+       RETURNING tx_hash`,
+                    [row.tx_hash, settlementHash ?? null],
+                );
+
+                if (update.rowCount === 0) {
+                    this.logger.warn(`UPDATE returned 0 rows for ${row.tx_hash}`);
+                } else {
+                    sweptCount += settlementHash ? 1 : 0;
+                }
+            } catch (err) {
+                this.logger.error(`Sweep/update failed for ${row.tx_hash}: ${err.message}`);
+            }
+        }
+        this.logger.log(
+            `★ newly-confirmed: ${confirmedCount}, swept: ${sweptCount}`,
+        );
 
         if (confirmedCount === 0) {
             this.logger.log('No deposits reached confirmation threshold.');
