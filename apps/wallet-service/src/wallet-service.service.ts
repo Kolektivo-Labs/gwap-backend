@@ -6,24 +6,61 @@ import {
   JsonRpcProvider,
   Wallet,
   TransactionReceipt,
+  keccak256,
+  toUtf8Bytes,
 } from 'ethers';
 import { Injectable, Logger } from '@nestjs/common';
-import { CFG } from './main';
+import { CFG, env } from './main';
 import { AddWalletRequestDto, AddWalletResponseDto } from './dto/add-wallet.dto';
 import { Pool } from 'pg';
 import SafeProxyFactoryAbi from './abi.json';
 import { MetricsService } from './metrics.service';
+import { getCreate2Address } from 'ethers';
+import {
+  getProxyFactoryDeployment,
+  getSafeSingletonDeployment,
+  getFallbackHandlerDeployment,
+} from '@safe-global/safe-deployments';
 
+type SafeDeploymentInfo = {
+  factory: string;
+  singleton: string;
+  registry: string;
+  fallbackHandler: string;
+  rpc: string
+};
 
+const chainIds = ['10', '42161', '42220']; // OP, Arbitrum, Celo
 
+export const SAFE_DEPLOYMENTS: Record<string, SafeDeploymentInfo> = Object.fromEntries(
+  chainIds.map((chainId) => {
+    const proxyFactory = getProxyFactoryDeployment({ network: chainId });
+    const singleton = getSafeSingletonDeployment({ network: chainId });
+    const fallbackHandler = getFallbackHandlerDeployment({ network: chainId });
+
+    if (!proxyFactory || !singleton || !fallbackHandler) {
+      throw new Error(`Missing Safe deployment data for chainId ${chainId}`);
+    }
+
+    const entry: [string, SafeDeploymentInfo] = [
+      chainId,
+      {
+        factory: proxyFactory.defaultAddress,
+        singleton: singleton.defaultAddress,
+        registry: fallbackHandler.defaultAddress,
+        fallbackHandler: fallbackHandler.defaultAddress,
+        rpc: (chainId == '10' ? env('RPC_URL_OP') : (chainId == '42220' ? env('RPC_URL_CELO') : env('RPC_URL_ARBITRUM')))!
+      },
+    ];
+
+    return entry;
+  }),
+);
 @Injectable()
 export class WalletService {
   constructor(
-
     private readonly metricsService: MetricsService
   ) { }
-
-  
 
 
   private readonly logger = new Logger(WalletService.name);
@@ -35,7 +72,15 @@ export class WalletService {
       throw new Error('Missing required fields: email, accountId, userId');
     }
 
+    const existingWallet = await this.getWalletByUserId(userId)
+
+    if (existingWallet != null) {
+      this.logger.error(`Tryed to re-create a wallet for the user ${userId}`);
+      throw new Error('User already has a wallet');
+    }
     try {
+
+
       return await this.createUserAccount(request);
     } catch (error: any) {
       this.logger.error('Failed to process wallet creation', error);
@@ -46,25 +91,20 @@ export class WalletService {
   async createUserAccount(request: AddWalletRequestDto): Promise<AddWalletResponseDto> {
     const { email, accountId, userId } = request;
 
-    let proxyAddress: string;
-    try {
-      proxyAddress = await this.createSafeProxy();
-      proxyAddress = proxyAddress.toLowerCase();
-    } catch (error: any) {
-      this.logger.error('Safe creation failed', error);
-      throw new Error('Failed to create Safe Smart Account');
-    }
+    let proxyAddress = "";
     const pgClient = new Pool({
       connectionString: process.env.DATABASE_URL,
     });
 
-
-
-    const client = await pgClient.connect();
-
+    let client: any
     try {
-      await client.query('BEGIN');
 
+      this.predictAddresses(userId!)
+
+      const saltNonce = keccak256(toUtf8Bytes(`wallet:${userId}`))
+      client = await pgClient.connect();
+
+      await client.query('BEGIN');
       await client.query(
         `INSERT INTO users (user_id, girasol_account_id, email)
          VALUES ($1, $2, $3)
@@ -74,11 +114,15 @@ export class WalletService {
         [userId, accountId, email],
       );
 
-      await client.query(
-        `INSERT INTO wallets (user_id, deposit_addr, chain_id)
+      for (const chainId of Object.keys(SAFE_DEPLOYMENTS).map(Number)) {
+        proxyAddress = (await this.createSafeProxy(chainId, saltNonce)).toLowerCase();
+        proxyAddress = proxyAddress.toLowerCase();
+        await client.query(
+          `INSERT INTO wallets (user_id, deposit_addr, chain_id)
          VALUES ($1, $2, $3)`,
-        [userId, proxyAddress, CFG.chainId],
-      );
+          [userId, proxyAddress, chainId],
+        );
+      }
 
       await client.query('COMMIT');
 
@@ -91,16 +135,62 @@ export class WalletService {
     } catch (err) {
       await client.query('ROLLBACK');
       this.logger.error('DB transaction failed', err);
+      this.metricsService.walletDeployFailCounter.inc();
       throw err;
     } finally {
       client.release();
     }
   }
 
-  async createSafeProxy(): Promise<string> {
-    const OP_FACTORY = '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC';
-    const SINGLETON = '0x3E5c63644E683549055b9Be8653de26E0B4CD36E';
-    const REGISTRY = '0xaE00377a40B8b14e5f92E28A945c7DdA615b2B46';
+
+  private predictAddresses(userId: string) {
+    const saltNonce = keccak256(toUtf8Bytes(`wallet:${userId}`));
+
+    this.logger.log(`Predicting Safe addresses for user ${userId}...`);
+
+    for (const chainId of Object.keys(SAFE_DEPLOYMENTS).map(Number)) {
+      const { factory, singleton } = SAFE_DEPLOYMENTS[chainId];
+
+      const safeInterface = new Interface([
+        'function setup(address[] owners,uint256 threshold,address to,bytes data,address fallbackHandler,address paymentToken,uint256 payment,address payable paymentReceiver)',
+      ]);
+
+      const initData = safeInterface.encodeFunctionData('setup', [
+        [process.env.MAIN_SAFE!],
+        1,
+        ZeroAddress,
+        '0x',
+        ZeroAddress,
+        ZeroAddress,
+        0,
+        ZeroAddress,
+      ]);
+
+      const proxyInitCode = ethers.solidityPacked(
+        ['bytes', 'address'],
+        ['0x602d8060093d393df3363d3d373d3d3d363d73' + singleton.slice(2) + '5af43d82803e903d91602b57fd5bf3', singleton]
+      );
+
+      const predicted = this.predictSafeAddress(factory, saltNonce, proxyInitCode);
+      this.logger.log(`Chain ${chainId} → ${predicted}`);
+    }
+  }
+
+  private predictSafeAddress(factory: string, saltNonce: string, initCode: string): string {
+    const saltHex = saltNonce.startsWith('0x') ? saltNonce : `0x${saltNonce}`;
+    const create2Salt = saltHex.padEnd(66, '0'); // 32 bytes
+
+    const initCodeHash = keccak256(initCode);
+
+    return getCreate2Address(factory, create2Salt, initCodeHash);
+  }
+
+  async createSafeProxy(chainId: number, saltNonce: string): Promise<string> {
+
+    const deployCFG = SAFE_DEPLOYMENTS[chainId];
+    // const OP_FACTORY = '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC';
+    // const SINGLETON = '0x3E5c63644E683549055b9Be8653de26E0B4CD36E';
+    // const REGISTRY = '0xaE00377a40B8b14e5f92E28A945c7DdA615b2B46';
     const OWNER_SAFE = process.env.MAIN_SAFE!;
 
     if (!OWNER_SAFE || !CFG.pk) {
@@ -127,22 +217,23 @@ export class WalletService {
       ZeroAddress,
     ]);
 
+    console.log('RPC!!!!!!',deployCFG.rpc)
     const abi = (SafeProxyFactoryAbi as any).default ?? SafeProxyFactoryAbi;
-    const provider = new JsonRpcProvider(CFG.rpc, CFG.chainId);
+    const provider = new JsonRpcProvider(deployCFG.rpc, chainId);
     const signer = new Wallet(CFG.pk, provider);
-    const saltNonce = Date.now().toString();
-    const factory = new Contract(OP_FACTORY, abi, signer);
+    // const saltNonce = Date.now().toString();
+    const factory = new Contract(deployCFG.factory, abi, signer);
 
 
     try {
       this.logger.log('Sending Safe proxy creation tx...');
-      const tx = await factory.createProxyWithCallback(SINGLETON, initData, saltNonce, REGISTRY);
+      const tx = await factory.createProxyWithCallback(deployCFG.singleton, initData, saltNonce, deployCFG.registry);
       this.logger.log(`Tx sent: ${tx.hash}`);
 
       const receipt: TransactionReceipt = await tx.wait();
 
       const proxyCreatedLog = receipt.logs.find(
-        (log) => log.address.toLowerCase() !== OP_FACTORY.toLowerCase(),
+        (log) => log.address.toLowerCase() !== deployCFG.factory.toLowerCase(),
       );
       if (!proxyCreatedLog) throw new Error('Proxy address not found in logs');
 
@@ -152,7 +243,6 @@ export class WalletService {
       return proxyAddress;
     } catch (err) {
       this.logger.error('Safe deployment failed', err);
-      this.metricsService.walletDeployFailCounter.inc();
       throw new Error('Safe proxy creation failed');
     }
   }

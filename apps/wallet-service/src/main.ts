@@ -13,15 +13,16 @@ bootstrap();
 import 'dotenv/config'
 import { ApiKeyGuard } from './common/api-key-guard';
 
-function env(name: string): string | undefined {
+export function env(name: string): string | undefined {  
   const v = process.env[name]
   if (!v) console.error(`Missing env: ${name}`)
   return v
 }
 
 export const CFG = {
-  rpc: env('RPC_URL'),
+  rpc_celo: env('RPC_URL_CELO'),
+  rpc_op: env('RPC_URL_OP'),
+  rpc_arbitrum: env('RPC_URL_ARBITRUM'),
   pk: env('RELAYER_PK'),
   mainSafe: env('MAIN_SAFE'),
-  chainId: 10  // Optimism
 }
