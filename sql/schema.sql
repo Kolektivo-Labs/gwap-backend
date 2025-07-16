@@ -19,6 +19,7 @@ CREATE TABLE deposits (
   tx_hash TEXT NOT NULL,
   chain_id INTEGER NOT NULL,
   deposit_addr TEXT NOT NULL,
+  erc20_address TEXT NOT NULL,
   amount_usd TEXT NOT NULL,
   gas_used TEXT NOT NULL,
   block_number BIGINT NOT NULL,

@@ -1,18 +1,16 @@
-/* src/token-sweeper/token-sweeper.service.ts
-   -------------------------------------------------------------
-   ENV required (same as before):
-     MAIN_SAFE, RELAYER_PK, RPC_URL
-*/
+
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ethers } from 'ethers';
-import Safe,  {EthersAdapter} from '@safe-global/protocol-kit';
+import { ethers, parseUnits } from 'ethers';
+import Safe, { EthersAdapter } from '@safe-global/protocol-kit';
 import {
   MetaTransactionData,
   OperationType,
   SafeTransaction,
 } from '@safe-global/safe-core-sdk-types';
+import { getTokenDecimals, GLOBALS } from 'apps/api/src/common/envs';
+import { getRPCFromChain } from 'apps/api/src/common/chains';
+import { Deposit } from '../common/deposit.entity';
 
-const TOKEN = '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85'; // USDT
 
 /* ——— ERC-20 & Gnosis-Safe ABIs ——— */
 const ERC20 = new ethers.Interface([
@@ -26,88 +24,90 @@ const SAFE_EXEC = new ethers.Interface([
 
 const APPROVE_IFACE = new ethers.Interface(['function approveHash(bytes32)']);
 
+
 @Injectable()
-export class TokenSweeperService implements OnModuleInit {
-    private logger = new Logger(TokenSweeperService.name);
-  
-    private provider!: ethers.JsonRpcProvider;
-    private ethAdapter!: EthersAdapter;
-    private mainSafeSdk!: Safe;            // <- created in onModuleInit
-    private usdt!: ethers.Contract;
-    private contractSig!: string;
-    private MAIN_SAFE!: string;
+export class TokenSweeperService {
+  private logger = new Logger(TokenSweeperService.name);
+
 
   constructor() {
-    const { MAIN_SAFE, RELAYER_PK, RPC_URL } = process.env;
-    if (!MAIN_SAFE || !RELAYER_PK || !RPC_URL) {
-      throw new Error('⛔ MAIN_SAFE / RELAYER_PK / RPC_URL env vars missing!');
-    }
-    this.MAIN_SAFE = MAIN_SAFE;            // save for later
+  }
 
-    this.provider = new ethers.JsonRpcProvider(RPC_URL);
-    const signer = new ethers.Wallet(RELAYER_PK, this.provider);
-    this.ethAdapter = new EthersAdapter({ ethers, signerOrProvider: signer });
-    this.usdt = new ethers.Contract(TOKEN, ERC20, this.provider);
+
+  async sweepProxySafe(deposit: Deposit): Promise<string | null> {
+
+    const chainId = deposit.chain_id.toString()
+    const erc20Address = deposit.erc20_address
+    const decimals = getTokenDecimals(erc20Address)
+    const address = deposit.deposit_addr
+
+
+    const rpcURL = getRPCFromChain(chainId)
+    const provider = new ethers.JsonRpcProvider(rpcURL);
+    const signer = new ethers.Wallet(GLOBALS.RELAYER_PK!, provider);
+    const ethAdapter = new EthersAdapter({ ethers, signerOrProvider: signer });
+    const erc20Contract = new ethers.Contract(erc20Address, ERC20, provider)
+
 
     // r = MAIN_SAFE, s = 0, v = 1
-    this.contractSig =
-      '0x' +
-      MAIN_SAFE.toLowerCase().replace('0x', '').padStart(64, '0') +
+    const contractSig = '0x' +
+      GLOBALS.MAIN_SAFE.toLowerCase().replace('0x', '').padStart(64, '0') +
       '0'.repeat(64) +
       '01';
-  }
 
-  /* ---------- async part ---------- */
-  async onModuleInit() {
-    this.mainSafeSdk = await Safe.create({
-      ethAdapter: this.ethAdapter,
-      safeAddress: this.MAIN_SAFE,
+    const mainSafeSdk = await Safe.create({
+      ethAdapter: ethAdapter,
+      safeAddress: GLOBALS.MAIN_SAFE,
     });
+
     this.logger.log('TokenSweeperService ready – main Safe loaded');
-  }
+    const proxySafe = ethers.getAddress(address); // checksum
 
-
-  /** Sweep every USDT in `proxySafe` to MAIN_SAFE.  Idempotent. */
-  async sweepProxySafe(proxySafe: string): Promise<string | null> {
-    proxySafe = ethers.getAddress(proxySafe); // checksum
-    const bal: bigint = await this.usdt.balanceOf(proxySafe);
-
-    if (bal === 0n) {
-      this.logger.log(`[${proxySafe}] balance is zero — nothing to sweep`);
-      return null;
-    }
-    this.logger.log(
-      `[${proxySafe}] sweeping ${ethers.formatUnits(bal, 6)} USDT → MAIN_SAFE`,
-    );
-
-    /* ——— Build the inner Safe tx (USDT transfer) ——— */
     const proxyEthAdapter = new EthersAdapter({
       ethers,
-      signerOrProvider: this.mainSafeSdk.getEthAdapter().getSigner()!, // same signer
+      signerOrProvider: mainSafeSdk.getEthAdapter().getSigner()!, // same signer
     });
     const proxySdk = await Safe.create({
       ethAdapter: proxyEthAdapter,
       safeAddress: proxySafe,
     });
 
+
+
+
+    const totalBalance: bigint = await erc20Contract.balanceOf(proxySafe);
+
+
+    if (totalBalance === 0n) {
+      this.logger.log(`[${proxySafe}] balance is zero — nothing to sweep`);
+      return null;
+    }
+
+    const normalizedBalance = ethers.formatUnits(totalBalance, decimals)
+    const sweepAmount = parseFloat(normalizedBalance) < parseFloat(deposit.amount_usd) ? totalBalance : parseUnits(deposit.amount_usd, decimals)
+
+    this.logger.log(`[${proxySafe}] sweeping ${normalizedBalance} USD → MAIN_SAFE`,);
+    /* ——— Build the inner Safe tx (ERC20 transfer) ——— */
+
+
     this.logger.log(
-      `[${this.MAIN_SAFE}] Receiving ${ethers.formatUnits(bal, 6)} USDC`,
+      `[${GLOBALS.MAIN_SAFE}] Receiving ${normalizedBalance} USD`,
     );
-
-
     const transferTx: MetaTransactionData = {
-      to: TOKEN,
+      to: erc20Address,
       value: '0',
-      data: ERC20.encodeFunctionData('transfer', [this.MAIN_SAFE, bal]),
+      data: ERC20.encodeFunctionData('transfer', [GLOBALS.MAIN_SAFE, sweepAmount]),
       operation: OperationType.Call,
     };
+
     const safeTx: SafeTransaction = await proxySdk.createTransaction({
       transactions: [transferTx],
     });
+
     const hash = await proxySdk.getTransactionHash(safeTx);
 
     /* ——— 1. approveHash() on the proxy  ——— */
-    const approveTx = await this.mainSafeSdk.createTransaction({
+    const approveTx = await mainSafeSdk.createTransaction({
       transactions: [
         {
           to: proxySafe,
@@ -117,14 +117,16 @@ export class TokenSweeperService implements OnModuleInit {
         },
       ],
     });
-    await this.mainSafeSdk.signTransaction(approveTx);
-    const sent1 = await this.mainSafeSdk.executeTransaction(approveTx);
+
+    await mainSafeSdk.signTransaction(approveTx);
+    const sent1 = await mainSafeSdk.executeTransaction(approveTx);
     await (sent1.transactionResponse as ethers.TransactionResponse).wait();
+
     this.logger.log(`[${proxySafe}] approveHash ✓`);
 
     /* ——— 2. execTransaction() on the proxy  ——— */
     const d = safeTx.data;
-    const execTx = await this.mainSafeSdk.createTransaction({
+    const execTx = await mainSafeSdk.createTransaction({
       transactions: [
         {
           to: proxySafe,
@@ -139,14 +141,14 @@ export class TokenSweeperService implements OnModuleInit {
             0, // gasPrice
             ethers.ZeroAddress,
             ethers.ZeroAddress,
-            this.contractSig,
+            contractSig,
           ]),
           operation: OperationType.Call,
         },
       ],
     });
-    await this.mainSafeSdk.signTransaction(execTx);
-    const sent2 = await this.mainSafeSdk.executeTransaction(execTx);
+    await mainSafeSdk.signTransaction(execTx);
+    const sent2 = await mainSafeSdk.executeTransaction(execTx);
     const rc = await (sent2.transactionResponse as ethers.TransactionResponse).wait();
     this.logger.log(`[${proxySafe}] sweep complete – tx ${rc!.hash}`);
     return rc!.hash;

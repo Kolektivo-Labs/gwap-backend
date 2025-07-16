@@ -1,10 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { Pool } from 'pg';
+import format from 'pg-format';
 import 'dotenv/config';
-import { Alchemy, AssetTransfersCategory, Network } from 'alchemy-sdk';
+import { Alchemy, AssetTransfersCategory } from 'alchemy-sdk';
 import { DatabaseService } from '../common/database.service';
+import { createAlchemy, getAlchemyNetworkFromChain, SUPPORTED_CHAIN_IDS, TransfersWithChain } from 'apps/api/src/common/chains';
+import { env, GLOBALS } from 'apps/api/src/common/envs';
 
+type WalletRecord = { user_id: string; deposit_addr: string };
 
 
 @Injectable()
@@ -14,24 +16,27 @@ export class DepositFetcherService {
   constructor(private readonly db: DatabaseService) { }
 
   async syncDeposits() {
-    const wallets = await this.getWalletsFromOptimism();
+    const wallets = await this.getWallets();
     if (wallets.length === 0) return;
 
-    const after = await this.getLastSyncedBlockNumber();
-    const allNewTransfers: any[] = [];
+    const fromBlockHex = await this.getLastSyncedBlockNumber();
+    const allNewTransfers: TransfersWithChain[] = [];
 
 
     const chunkSize = 100;
-    for (let i = 0; i < wallets.length; i += chunkSize) {
-      const chunk = wallets.slice(i, i + chunkSize).map(w => w.deposit_addr.toLowerCase());
-      console.log(`Syncing deposits after block: ${after} for ${chunk}`);
-      const transfers = await this.fetchTransfers(chunk, after);
+    for (const chainId of SUPPORTED_CHAIN_IDS) {
+      for (let i = 0; i < wallets.length; i += chunkSize) {
+        const chunk = wallets.slice(i, i + chunkSize).map(w => w.deposit_addr.toLowerCase());
+        this.logger.debug(`Syncing deposits after block: ${fromBlockHex} for: ${chunk}`);
 
-      console.log(`Transfers fetched: ${transfers.length}`);
-      if (transfers.length === 0) continue;
+        const transfers = await this.fetchTransfers(chainId, chunk, fromBlockHex);
 
-      const newTransfers = await this.filterNewTransfers(transfers);
-      allNewTransfers.push(...newTransfers);
+        this.logger.debug(`Transfers fetched: ${transfers.length}`);
+        if (transfers.length === 0) continue;
+
+        const newTransfers = await this.filterNewTransfers(chainId, transfers);
+        allNewTransfers.push(...newTransfers);
+      }
     }
 
     if (allNewTransfers.length > 0) {
@@ -42,9 +47,9 @@ export class DepositFetcherService {
     }
   }
 
-  private async getWalletsFromOptimism(): Promise<{ user_id: string; deposit_addr: string }[]> {
+  private async getWallets(): Promise<WalletRecord[]> {
     const res = await this.db.pool.query(
-      'SELECT user_id, deposit_addr FROM wallets WHERE chain_id = 10',
+      'SELECT user_id, deposit_addr FROM wallets GROUP BY user_id, deposit_addr',
     );
     return res.rows;
   }
@@ -56,16 +61,13 @@ export class DepositFetcherService {
     return `0x${Number(res.rows[0].last).toString(16)}`;
   }
 
-  private async fetchTransfers(addresses: string[], after: `0x${string}`): Promise<any[]> {
+  private async fetchTransfers(chainId: string, addresses: string[], after: `0x${string}`): Promise<TransfersWithChain[]> {
 
 
-    const settings = {
-      apiKey: process.env.ALCHEMY_PRIVATE_KEY!,
-      network: Network.OPT_MAINNET,
-    };
 
-    const alchemy = new Alchemy(settings);
-    console.log(`Fetching transfers after : ${after}`);
+    const alchemy = createAlchemy(chainId);
+
+    this.logger.debug(`Fetching transfers after : ${after}`);
 
     const results = await Promise.all(
       addresses.map(async (address) => {
@@ -75,23 +77,25 @@ export class DepositFetcherService {
           toAddress: address,
           excludeZeroValue: true,
           category: [AssetTransfersCategory.ERC20],
-          contractAddresses: ['0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85'],
-        });        
-        console.log(`Fetched transfers for address: ${address}`);
+          contractAddresses: GLOBALS.ERC20_TOKEN_ADDRESSES[chainId],
+        });
+        this.logger.debug(`Fetched transfers for address: ${address}`);
         return result.transfers;
       })
     );
-    return results.flat();
+    return results.flat().map((x) => { return { ...x, chainId } });
   }
 
-  private async filterNewTransfers(transfers: any[]): Promise<any[]> {
+  private async filterNewTransfers(chainId: string, transfers: TransfersWithChain[]): Promise<TransfersWithChain[]> {
     if (transfers.length === 0) return [];
 
-    const hashes = transfers.map(d => `'${d.hash}'`).join(',');
+    const hashes = transfers.map(d => d.hash);
     if (hashes.length === 0) return transfers;
 
-    const res = await this.db.pool.query<{ tx_hash: string }>(
-      `SELECT tx_hash FROM deposits WHERE tx_hash IN (${hashes})`,
+    const params = hashes.map((_, i) => `$${i + 2}`).join(', ');
+    const res = await this.db.pool.query(
+      `SELECT tx_hash FROM deposits WHERE tx_hash IN (${params}) AND chain_id = $1`,
+      [chainId, ...hashes]
     );
     const existing = new Set(res.rows.map(r => r.tx_hash));
 
@@ -99,34 +103,36 @@ export class DepositFetcherService {
   }
 
   private async insertDeposits(
-    transfers: any[],
+    transfers: TransfersWithChain[],
     wallets: { user_id: string; deposit_addr: string }[]
   ) {
     const addressSet = new Set(wallets.map(w => w.deposit_addr.toLowerCase()));
 
     const values: string[] = [];
 
-    for (const t of transfers) {
-      if (!t.to || t.value === null) continue;
-      const depositAddr = t.to.toLowerCase();
-      if (!addressSet.has(depositAddr)) continue;
 
-      const amount = t.value.toString();
-      const blockNumber = parseInt(t.blockNum, 16);
 
-      values.push(
-        `('${t.hash.replace(/'/g, "''")}', '${depositAddr}', 10, ${amount}, FALSE, FALSE, ${blockNumber}, 0)`
-      );
+    const rows = transfers
+      .filter(t => t.to && t.value !== null)
+      .map(t => [
+        t.hash,
+        t.to!.toLowerCase(),
+        t.chainId,
+        t.value!.toString(),
+        parseInt(t.blockNum, 16),
+        '0',
+        false,
+        false,
+      ]);
 
-    }
+    if (rows.length === 0) return;
 
-    if (values.length === 0) return;
-
-    const sql = `
-    INSERT INTO deposits (tx_hash, deposit_addr, chain_id, amount_usd, confirmed, settled, block_number, gas_used)
-    VALUES ${values.join(', ')}
-  `;
-    await this.db.pool.query(sql);
+    const query = format(
+      `INSERT INTO deposits (tx_hash, deposit_addr, chain_id, amount_usd, block_number, gas_used, confirmed, settled)
+   VALUES %L`,
+      rows
+    );
+    await this.db.pool.query(query);
   }
 
 }
