@@ -45,7 +45,7 @@ export class DepositSenderService {
       const client = await this.db.pool.connect();
 
       try {
-        await client.query('BEGIN');
+
 
         const response = await axios.post(this.apiUrl, payload, {
           headers: {
@@ -62,14 +62,14 @@ export class DepositSenderService {
             [row.tx_hash]
           );
 
-          await client.query('COMMIT');
+
           this.logger.log(`Sent deposit ${row.tx_hash} successfully.`);
         } else {
-          await client.query('ROLLBACK');
+
           this.logger.warn(`Deposit ${row.tx_hash} failed validation. Response: ${JSON.stringify(response.data)}`);
         }
       } catch (err) {
-        await client.query('ROLLBACK');
+
         if (axios.isAxiosError(err) && err.response) {
           this.logger.error(`Error sending deposit ${row.tx_hash}: ${err.message}`);
           this.logger.error(`Response status: ${err.response.status}`);
