@@ -13,12 +13,12 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { AddWalletRequestDto, AddWalletResponseDto } from './dto/add-wallet.dto';
 import { Pool } from 'pg';
-import SafeProxyFactoryAbi from './abi.json';
+
 import { MetricsService } from './metrics.service';
 import { getCreate2Address } from 'ethers';
 import { SAFE_DEPLOYMENTS } from './common/safe-deployment';
 import { SUPPORTED_CHAIN_IDS } from 'apps/api/src/common/chains';
-import { env } from 'apps/api/src/common/envs';
+import { env, GLOBALS } from 'apps/api/src/common/envs';
 
 
 const RELAYER_PK = env('RELAYER_PK')
@@ -67,7 +67,7 @@ export class WalletService {
 
       //this.predictAddresses(userId!)
 
-      const saltNonce = keccak256(toUtf8Bytes(`wallet:${userId}`))
+      const saltNonce = keccak256(toUtf8Bytes(`wallet:${userId}:${GLOBALS.MAIN_SAFE}`))
       client = await pgClient.connect();
 
       await client.query('BEGIN');
@@ -120,9 +120,6 @@ export class WalletService {
   async createSafeProxy(chainId: number, saltNonce: string): Promise<string | null> {
 
     const deployCFG = SAFE_DEPLOYMENTS[chainId];
-    // const OP_FACTORY = '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC';
-    // const SINGLETON = '0x3E5c63644E683549055b9Be8653de26E0B4CD36E';
-    // const REGISTRY = '0xaE00377a40B8b14e5f92E28A945c7DdA615b2B46';
 
 
     if (!OWNER_SAFE || !RELAYER_PK) {
@@ -148,13 +145,14 @@ export class WalletService {
       0,
       ZeroAddress,
     ]);
+    const createProxyWithCallbackAbi = [
+      "function createProxyWithCallback(address _singleton, bytes memory initializer, uint256 saltNonce, address callback)"
+    ];
 
 
-    const abi = (SafeProxyFactoryAbi as any).default ?? SafeProxyFactoryAbi;
     const provider = new JsonRpcProvider(deployCFG.rpc, chainId);
     const signer = new Wallet(RELAYER_PK, provider);
-    // const saltNonce = Date.now().toString();
-    const factory = new Contract(deployCFG.factory, abi, signer);
+    const factory = new Contract(deployCFG.factory, createProxyWithCallbackAbi, signer);
 
 
     try {
@@ -170,7 +168,7 @@ export class WalletService {
       if (!proxyCreatedLog) throw new Error('Proxy address not found in logs');
 
       const proxyAddress = proxyCreatedLog.address;
-      this.logger.log(`New Safe deployed at: ${proxyAddress}`);
+      this.logger.log(`New Safe deployed`);
 
       return proxyAddress;
     } catch (err) {
@@ -216,47 +214,5 @@ export class WalletService {
     }
   }
 
-
-  private predictAddresses(userId: string) {
-    const saltNonce = keccak256(toUtf8Bytes(`wallet:${userId}`));
-
-    this.logger.log(`Predicting Safe addresses for user ${userId}...`);
-
-    for (const chainId of Object.keys(SAFE_DEPLOYMENTS).map(Number)) {
-      const { factory, singleton } = SAFE_DEPLOYMENTS[chainId];
-
-      const safeInterface = new Interface([
-        'function setup(address[] owners,uint256 threshold,address to,bytes data,address fallbackHandler,address paymentToken,uint256 payment,address payable paymentReceiver)',
-      ]);
-
-      const initData = safeInterface.encodeFunctionData('setup', [
-        [process.env.MAIN_SAFE!],
-        1,
-        ZeroAddress,
-        '0x',
-        ZeroAddress,
-        ZeroAddress,
-        0,
-        ZeroAddress,
-      ]);
-
-      const proxyInitCode = ethers.solidityPacked(
-        ['bytes', 'address'],
-        ['0x602d8060093d393df3363d3d373d3d3d363d73' + singleton.slice(2) + '5af43d82803e903d91602b57fd5bf3', singleton]
-      );
-
-      const predicted = this.predictSafeAddress(factory, saltNonce, proxyInitCode);
-      this.logger.log(`Chain ${chainId} → ${predicted}`);
-    }
-  }
-
-  private predictSafeAddress(factory: string, saltNonce: string, initCode: string): string {
-    const saltHex = saltNonce.startsWith('0x') ? saltNonce : `0x${saltNonce}`;
-    const create2Salt = saltHex.padEnd(66, '0'); // 32 bytes
-
-    const initCodeHash = keccak256(initCode);
-
-    return getCreate2Address(factory, create2Salt, initCodeHash);
-  }
 
 }
