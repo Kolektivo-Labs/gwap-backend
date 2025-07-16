@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import 'dotenv/config';
-import { DatabaseService } from '../common/database.service';
+import { DatabaseService } from '../../../api/src/common/database.service';
 import { TokenSweeperService } from '../token-sweep/token-sweep.service';
 import { createAlchemy, SUPPORTED_CHAIN_IDS } from 'apps/api/src/common/chains';
 import { Deposit } from '../common/deposit.entity';

@@ -1,5 +1,4 @@
 import {
-  ethers,
   Contract,
   Interface,
   ZeroAddress,
@@ -10,24 +9,20 @@ import {
   toUtf8Bytes,
 } from 'ethers';
 import { Injectable, Logger } from '@nestjs/common';
-
 import { AddWalletRequestDto, AddWalletResponseDto } from './dto/add-wallet.dto';
-import { Pool } from 'pg';
-
 import { MetricsService } from './metrics.service';
-import { getCreate2Address } from 'ethers';
 import { SAFE_DEPLOYMENTS } from './common/safe-deployment';
 import { SUPPORTED_CHAIN_IDS } from 'apps/api/src/common/chains';
-import { env, GLOBALS } from 'apps/api/src/common/envs';
+import { GLOBALS } from 'apps/api/src/common/envs';
+import { DatabaseService } from 'apps/api/src/common/database.service';
 
 
-const RELAYER_PK = env('RELAYER_PK')
-const OWNER_SAFE = env('MAIN_SAFE')!;
 
 @Injectable()
 export class WalletService {
   constructor(
-    private readonly metricsService: MetricsService
+    private readonly metricsService: MetricsService,
+    private readonly db: DatabaseService,
   ) { }
 
 
@@ -54,21 +49,15 @@ export class WalletService {
     }
   }
 
-  async createUserAccount(request: AddWalletRequestDto, existingWallet?: string[]): Promise<AddWalletResponseDto> {
+  async createUserAccount(request: AddWalletRequestDto, existingChains?: string[]): Promise<AddWalletResponseDto> {
     const { email, accountId, userId } = request;
 
     let proxyAddress: string | null = "";
-    const pgClient = new Pool({
-      connectionString: process.env.DATABASE_URL,
-    });
 
     let client: any
     try {
 
-      //this.predictAddresses(userId!)
-
-      const saltNonce = keccak256(toUtf8Bytes(`wallet:${userId}:${GLOBALS.MAIN_SAFE}`))
-      client = await pgClient.connect();
+      client = await this.db.pool.connect();
 
       await client.query('BEGIN');
       await client.query(
@@ -80,11 +69,11 @@ export class WalletService {
         [userId, accountId, email],
       );
 
-      const chainIds: string[] = existingWallet ?? []
+      const chainIds: string[] = existingChains ?? []
       for (const chainId of Object.keys(SAFE_DEPLOYMENTS).map(Number)) {
         if (chainIds.includes(chainId.toString()))
           continue;
-        proxyAddress = await this.createSafeProxy(chainId, saltNonce)
+        proxyAddress = await this.createSafeProxy(chainId, userId!)
         if (!proxyAddress)
           continue
         chainIds.push(chainId.toString())
@@ -108,7 +97,6 @@ export class WalletService {
     } catch (err) {
       await client.query('ROLLBACK');
       this.logger.error('DB transaction failed', err);
-      this.metricsService.walletDeployFailCounter.inc();
       throw err;
     } finally {
       client.release();
@@ -117,12 +105,12 @@ export class WalletService {
 
 
 
-  async createSafeProxy(chainId: number, saltNonce: string): Promise<string | null> {
+  async createSafeProxy(chainId: number, userId: string): Promise<string | null> {
 
     const deployCFG = SAFE_DEPLOYMENTS[chainId];
+    const saltNonce = keccak256(toUtf8Bytes(`wallet:${userId}:${GLOBALS.MAIN_SAFE}`))
 
-
-    if (!OWNER_SAFE || !RELAYER_PK) {
+    if (!GLOBALS.MAIN_SAFE || !GLOBALS.RELAYER_PK) {
       if (process.env.NODE_ENV === 'production') {
         throw new Error('Missing OWNER_SAFE env var');
       }
@@ -136,7 +124,7 @@ export class WalletService {
     ]);
 
     const initData = safeInterface.encodeFunctionData('setup', [
-      [OWNER_SAFE],
+      [GLOBALS.MAIN_SAFE],
       1,
       ZeroAddress,
       '0x',
@@ -151,7 +139,7 @@ export class WalletService {
 
 
     const provider = new JsonRpcProvider(deployCFG.rpc, chainId);
-    const signer = new Wallet(RELAYER_PK, provider);
+    const signer = new Wallet(GLOBALS.RELAYER_PK, provider);
     const factory = new Contract(deployCFG.factory, createProxyWithCallbackAbi, signer);
 
 
@@ -171,18 +159,27 @@ export class WalletService {
       this.logger.log(`New Safe deployed`);
 
       return proxyAddress;
-    } catch (err) {
-      this.logger.error('Safe deployment failed', err);
-      return null
+    } catch (err: any) {
+      this.logger.error('Safe deployment failed');
+      this.metricsService.walletDeployFailCounter.labels({ chainId, userId, reason: err.code || 'unknown' }).inc();
+      if (err.code === 'CALL_EXCEPTION') {
+        this.logger.error('EVM Revert reason:', err.reason || 'Unknown');
+      } else if (err.code === 'NETWORK_ERROR') {
+        this.logger.error('Network error during Safe deployment', err);
+      } else if (err.code === 'SERVER_ERROR') {
+        this.logger.error('RPC Server error', err);
+      } else {
+        this.logger.error('Unhandled error', err);
+      }
+
+      return null;
     }
   }
 
   async getWalletByUserId(userId: string): Promise<AddWalletResponseDto | null> {
-    const pgClient = new Pool({
-      connectionString: process.env.DATABASE_URL,
-    });
 
-    const client = await pgClient.connect();
+
+    const client = await this.db.pool.connect();
 
     try {
       const res = await client.query(

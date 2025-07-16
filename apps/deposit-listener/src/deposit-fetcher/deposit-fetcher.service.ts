@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import format from 'pg-format';
 import 'dotenv/config';
 import { Alchemy, AssetTransfersCategory } from 'alchemy-sdk';
-import { DatabaseService } from '../common/database.service';
+import { DatabaseService } from '../../../api/src/common/database.service';
 import { createAlchemy, getAlchemyNetworkFromChain, SUPPORTED_CHAIN_IDS, TransfersWithChain } from 'apps/api/src/common/chains';
 import { env, GLOBALS } from 'apps/api/src/common/envs';
 

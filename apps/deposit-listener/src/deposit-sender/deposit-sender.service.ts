@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
-import { DatabaseService } from '../common/database.service';
+import { DatabaseService } from '../../../api/src/common/database.service';
 import { formatUnits } from 'ethers';
 
 @Injectable()
