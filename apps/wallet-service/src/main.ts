@@ -1,5 +1,7 @@
 import { NestFactory, Reflector } from '@nestjs/core';
 import { WalletServiceModule } from './wallet-service.module';
+import { ApiKeyGuard } from './common/api-key-guard';
+
 
 async function bootstrap() {
   const app = await NestFactory.create(WalletServiceModule);
@@ -9,17 +11,3 @@ async function bootstrap() {
 }
 bootstrap();
 
-
-import 'dotenv/config'
-import { ApiKeyGuard } from './common/api-key-guard';
-
-export function env(name: string): string | undefined {  
-  const v = process.env[name]
-  if (!v) console.error(`Missing env: ${name}`)
-  return v
-}
-
-export const CFG = { 
-  pk: env('RELAYER_PK'),
-  mainSafe: env('MAIN_SAFE'),
-}
