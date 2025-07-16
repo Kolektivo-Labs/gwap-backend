@@ -30,7 +30,7 @@ type SafeDeploymentInfo = {
   rpc: string
 };
 
-const chainIds = ['10', '42161', '42220']; // OP, Arbitrum, Celo
+const chainIds = ['10', '1', '42220']; // OP, Arbitrum, Celo
 
 export const SAFE_DEPLOYMENTS: Record<string, SafeDeploymentInfo> = Object.fromEntries(
   chainIds.map((chainId) => {
@@ -49,7 +49,7 @@ export const SAFE_DEPLOYMENTS: Record<string, SafeDeploymentInfo> = Object.fromE
         singleton: singleton.defaultAddress,
         registry: fallbackHandler.defaultAddress,
         fallbackHandler: fallbackHandler.defaultAddress,
-        rpc: (chainId == '10' ? env('RPC_URL_OP') : (chainId == '42220' ? env('RPC_URL_CELO') : env('RPC_URL_ARBITRUM')))!
+        rpc: env(`RPC_URL_${chainId}`)!
       },
     ];
 
@@ -74,24 +74,22 @@ export class WalletService {
 
     const existingWallet = await this.getWalletByUserId(userId)
 
-    if (existingWallet != null) {
+    if (existingWallet != null && existingWallet.chainIds.length == chainIds.length) {
       this.logger.error(`Tryed to re-create a wallet for the user ${userId}`);
       throw new Error('User already has a wallet');
     }
     try {
-
-
-      return await this.createUserAccount(request);
+      return await this.createUserAccount(request, existingWallet?.chainIds);
     } catch (error: any) {
       this.logger.error('Failed to process wallet creation', error);
       throw new Error('Wallet creation failed');
     }
   }
 
-  async createUserAccount(request: AddWalletRequestDto): Promise<AddWalletResponseDto> {
+  async createUserAccount(request: AddWalletRequestDto, existingWallet?: string[]): Promise<AddWalletResponseDto> {
     const { email, accountId, userId } = request;
 
-    let proxyAddress = "";
+    let proxyAddress: string | null = "";
     const pgClient = new Pool({
       connectionString: process.env.DATABASE_URL,
     });
@@ -99,7 +97,7 @@ export class WalletService {
     let client: any
     try {
 
-      this.predictAddresses(userId!)
+      //this.predictAddresses(userId!)
 
       const saltNonce = keccak256(toUtf8Bytes(`wallet:${userId}`))
       client = await pgClient.connect();
@@ -114,8 +112,14 @@ export class WalletService {
         [userId, accountId, email],
       );
 
+      const chainIds: string[] = existingWallet ?? []
       for (const chainId of Object.keys(SAFE_DEPLOYMENTS).map(Number)) {
-        proxyAddress = (await this.createSafeProxy(chainId, saltNonce)).toLowerCase();
+        if (chainIds.includes(chainId.toString()))
+          continue;
+        proxyAddress = await this.createSafeProxy(chainId, saltNonce)
+        if (!proxyAddress)
+          continue
+        chainIds.push(chainId.toString())
         proxyAddress = proxyAddress.toLowerCase();
         await client.query(
           `INSERT INTO wallets (user_id, deposit_addr, chain_id)
@@ -130,7 +134,8 @@ export class WalletService {
         userId: userId!,
         email: email!,
         accountId: accountId!,
-        address: proxyAddress,
+        address: proxyAddress!,
+        chainIds
       };
     } catch (err) {
       await client.query('ROLLBACK');
@@ -185,7 +190,7 @@ export class WalletService {
     return getCreate2Address(factory, create2Salt, initCodeHash);
   }
 
-  async createSafeProxy(chainId: number, saltNonce: string): Promise<string> {
+  async createSafeProxy(chainId: number, saltNonce: string): Promise<string | null> {
 
     const deployCFG = SAFE_DEPLOYMENTS[chainId];
     // const OP_FACTORY = '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC';
@@ -211,13 +216,13 @@ export class WalletService {
       1,
       ZeroAddress,
       '0x',
-      ZeroAddress,
+      deployCFG.fallbackHandler,
       ZeroAddress,
       0,
       ZeroAddress,
     ]);
 
-    console.log('RPC!!!!!!',deployCFG.rpc)
+
     const abi = (SafeProxyFactoryAbi as any).default ?? SafeProxyFactoryAbi;
     const provider = new JsonRpcProvider(deployCFG.rpc, chainId);
     const signer = new Wallet(CFG.pk, provider);
@@ -227,7 +232,7 @@ export class WalletService {
 
     try {
       this.logger.log('Sending Safe proxy creation tx...');
-      const tx = await factory.createProxyWithCallback(deployCFG.singleton, initData, saltNonce, deployCFG.registry);
+      const tx = await factory.createProxyWithCallback(deployCFG.singleton, initData, saltNonce, ZeroAddress);
       this.logger.log(`Tx sent: ${tx.hash}`);
 
       const receipt: TransactionReceipt = await tx.wait();
@@ -243,7 +248,7 @@ export class WalletService {
       return proxyAddress;
     } catch (err) {
       this.logger.error('Safe deployment failed', err);
-      throw new Error('Safe proxy creation failed');
+      return null
     }
   }
 
@@ -257,10 +262,16 @@ export class WalletService {
     try {
       const res = await client.query(
         `
-      SELECT u.user_id, u.email, u.girasol_account_id as "accountId", w.deposit_addr as address
+      SELECT 
+        u.user_id,
+        u.email,
+        u.girasol_account_id as "accountId",
+        array_agg(w.chain_id) as "chainIds",
+        MIN(w.deposit_addr) as address
       FROM users u
       LEFT JOIN wallets w ON u.user_id = w.user_id
       WHERE u.user_id = $1
+      GROUP BY u.user_id, u.email, u.girasol_account_id
       `,
         [userId],
       );
@@ -269,7 +280,7 @@ export class WalletService {
         return null;
       }
 
-      return res.rows[0];
+      return res.rows[0] as AddWalletResponseDto;
     } catch (err) {
       this.logger.error('Failed to fetch wallet by userId', err);
       throw new Error('Failed to fetch wallet');

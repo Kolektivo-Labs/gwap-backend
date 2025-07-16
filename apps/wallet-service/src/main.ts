@@ -19,10 +19,7 @@ export function env(name: string): string | undefined {
   return v
 }
 
-export const CFG = {
-  rpc_celo: env('RPC_URL_CELO'),
-  rpc_op: env('RPC_URL_OP'),
-  rpc_arbitrum: env('RPC_URL_ARBITRUM'),
+export const CFG = { 
   pk: env('RELAYER_PK'),
   mainSafe: env('MAIN_SAFE'),
 }

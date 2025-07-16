@@ -8,4 +8,5 @@ export class AddWalletResponseDto {
     accountId: string;
     userId: string
     address: string;
+    chainIds: string[]
 }
