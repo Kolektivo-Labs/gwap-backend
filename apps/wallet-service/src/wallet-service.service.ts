@@ -10,52 +10,20 @@ import {
   toUtf8Bytes,
 } from 'ethers';
 import { Injectable, Logger } from '@nestjs/common';
-import { CFG, env } from './main';
+
 import { AddWalletRequestDto, AddWalletResponseDto } from './dto/add-wallet.dto';
 import { Pool } from 'pg';
 import SafeProxyFactoryAbi from './abi.json';
 import { MetricsService } from './metrics.service';
 import { getCreate2Address } from 'ethers';
-import {
-  getProxyFactoryDeployment,
-  getSafeSingletonDeployment,
-  getFallbackHandlerDeployment,
-} from '@safe-global/safe-deployments';
+import { SAFE_DEPLOYMENTS } from './common/safe-deployment';
+import { SUPPORTED_CHAIN_IDS } from 'apps/api/src/common/chains';
+import { env } from 'apps/api/src/common/envs';
 
-type SafeDeploymentInfo = {
-  factory: string;
-  singleton: string;
-  registry: string;
-  fallbackHandler: string;
-  rpc: string
-};
 
-const chainIds = ['10', '1', '42220']; // OP, Arbitrum, Celo
+const RELAYER_PK = env('RELAYER_PK')
+const OWNER_SAFE = env('MAIN_SAFE')!;
 
-export const SAFE_DEPLOYMENTS: Record<string, SafeDeploymentInfo> = Object.fromEntries(
-  chainIds.map((chainId) => {
-    const proxyFactory = getProxyFactoryDeployment({ network: chainId });
-    const singleton = getSafeSingletonDeployment({ network: chainId });
-    const fallbackHandler = getFallbackHandlerDeployment({ network: chainId });
-
-    if (!proxyFactory || !singleton || !fallbackHandler) {
-      throw new Error(`Missing Safe deployment data for chainId ${chainId}`);
-    }
-
-    const entry: [string, SafeDeploymentInfo] = [
-      chainId,
-      {
-        factory: proxyFactory.defaultAddress,
-        singleton: singleton.defaultAddress,
-        registry: fallbackHandler.defaultAddress,
-        fallbackHandler: fallbackHandler.defaultAddress,
-        rpc: env(`RPC_URL_${chainId}`)!
-      },
-    ];
-
-    return entry;
-  }),
-);
 @Injectable()
 export class WalletService {
   constructor(
@@ -74,7 +42,7 @@ export class WalletService {
 
     const existingWallet = await this.getWalletByUserId(userId)
 
-    if (existingWallet != null && existingWallet.chainIds.length == chainIds.length) {
+    if (existingWallet != null && existingWallet.chainIds.length == SUPPORTED_CHAIN_IDS.length) {
       this.logger.error(`Tryed to re-create a wallet for the user ${userId}`);
       throw new Error('User already has a wallet');
     }
@@ -196,9 +164,9 @@ export class WalletService {
     // const OP_FACTORY = '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC';
     // const SINGLETON = '0x3E5c63644E683549055b9Be8653de26E0B4CD36E';
     // const REGISTRY = '0xaE00377a40B8b14e5f92E28A945c7DdA615b2B46';
-    const OWNER_SAFE = process.env.MAIN_SAFE!;
+    
 
-    if (!OWNER_SAFE || !CFG.pk) {
+    if (!OWNER_SAFE || !RELAYER_PK) {
       if (process.env.NODE_ENV === 'production') {
         throw new Error('Missing OWNER_SAFE env var');
       }
@@ -225,7 +193,7 @@ export class WalletService {
 
     const abi = (SafeProxyFactoryAbi as any).default ?? SafeProxyFactoryAbi;
     const provider = new JsonRpcProvider(deployCFG.rpc, chainId);
-    const signer = new Wallet(CFG.pk, provider);
+    const signer = new Wallet(RELAYER_PK, provider);
     // const saltNonce = Date.now().toString();
     const factory = new Contract(deployCFG.factory, abi, signer);
 
