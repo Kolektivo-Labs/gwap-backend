@@ -18,12 +18,14 @@ export class MetricsService implements OnModuleInit {
         this.walletDeployFailCounter = new Counter({
             name: 'wallet_deploy_fail_total',
             help: 'Total number of failed wallet deployments',
+            labelNames: ['chainId', 'userId', 'reason'], 
             registers: [this.registry],
+
         });
     }
 
     onModuleInit() {
-        
+
     }
 
     public async getMetrics(): Promise<string> {
