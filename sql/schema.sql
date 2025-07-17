@@ -9,7 +9,7 @@ CREATE TABLE users (
 CREATE TABLE wallets (
   user_id TEXT NOT NULL,
   deposit_addr TEXT NOT NULL,
-  chain_id INTEGER NOT NULL,
+  chain_id TEXT NOT NULL,
   PRIMARY KEY (deposit_addr, chain_id),
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
@@ -17,7 +17,7 @@ CREATE TABLE wallets (
 -- deposits
 CREATE TABLE deposits (
   tx_hash TEXT NOT NULL,
-  chain_id INTEGER NOT NULL,
+  chain_id TEXT NOT NULL,
   deposit_addr TEXT NOT NULL,
   erc20_address TEXT NOT NULL,
   amount_usd TEXT NOT NULL,

@@ -37,12 +37,12 @@ export class WalletService {
 
     const existingWallet = await this.getWalletByUserId(userId)
 
-    if (existingWallet != null && existingWallet.chainIds.length == SUPPORTED_CHAIN_IDS.length) {
+    if (existingWallet != null && existingWallet.createdChainIds.length == SUPPORTED_CHAIN_IDS.length) {
       this.logger.error(`Tryed to re-create a wallet for the user ${userId}`);
       throw new Error('User already has a wallet');
     }
     try {
-      return await this.createUserAccount(request, existingWallet?.chainIds);
+      return await this.createUserAccount(request, existingWallet?.createdChainIds);
     } catch (error: any) {
       this.logger.error('Failed to process wallet creation', error);
       throw new Error('Wallet creation failed');
@@ -52,36 +52,52 @@ export class WalletService {
   async createUserAccount(request: AddWalletRequestDto, existingChains?: string[]): Promise<AddWalletResponseDto> {
     const { email, accountId, userId } = request;
 
-    let proxyAddress: string | null = "";
+    const client = await this.db.pool.connect();
+    const alreadyCreated = new Set(existingChains ?? []);
 
-    let client: any
+    const pendingChains = Object.keys(SAFE_DEPLOYMENTS).filter((id) => !alreadyCreated.has(id));
+
     try {
-
-      client = await this.db.pool.connect();
-
       await client.query('BEGIN');
+
+      // Insert user (upsert)
       await client.query(
         `INSERT INTO users (user_id, girasol_account_id, email)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (user_id) DO UPDATE
-         SET girasol_account_id = EXCLUDED.girasol_account_id,
-             email = EXCLUDED.email`,
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id) DO UPDATE
+       SET girasol_account_id = EXCLUDED.girasol_account_id,
+           email = EXCLUDED.email`,
         [userId, accountId, email],
       );
 
-      const chainIds: string[] = existingChains ?? []
-      for (const chainId of Object.keys(SAFE_DEPLOYMENTS).map(Number)) {
-        if (chainIds.includes(chainId.toString()))
-          continue;
-        proxyAddress = await this.createSafeProxy(chainId, userId!)
-        if (!proxyAddress)
-          continue
-        chainIds.push(chainId.toString())
-        proxyAddress = proxyAddress.toLowerCase();
+      // Create safes in parallel
+      const results = await Promise.allSettled(
+        pendingChains.map((chainId) =>
+          this.createSafeProxy(chainId, userId!).then((address) => ({ chainId, address })),
+        )
+      );
+
+      const successful: { chainId: string; address: string }[] = [];
+      const failed: string[] = [];
+
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value.address) {
+          successful.push({
+            chainId: result.value.chainId,
+            address: result.value.address.toLowerCase(),
+          });
+        } else if (result.status === 'fulfilled') {
+          failed.push(result.value.chainId);
+        } else {
+          this.logger.warn(`Unhandled rejection during parallel wallet creation`, result.reason);
+        }
+      }
+
+      for (const { chainId, address } of successful) {
         await client.query(
           `INSERT INTO wallets (user_id, deposit_addr, chain_id)
          VALUES ($1, $2, $3)`,
-          [userId, proxyAddress, chainId],
+          [userId, address, chainId],
         );
       }
 
@@ -91,8 +107,9 @@ export class WalletService {
         userId: userId!,
         email: email!,
         accountId: accountId!,
-        address: proxyAddress!,
-        chainIds
+        address: successful[0]?.address ?? '',
+        createdChainIds: [...(existingChains ?? []), ...successful.map((r) => r.chainId)],
+        errorChainIds: failed,
       };
     } catch (err) {
       await client.query('ROLLBACK');
@@ -105,7 +122,8 @@ export class WalletService {
 
 
 
-  async createSafeProxy(chainId: number, userId: string): Promise<string | null> {
+
+  async createSafeProxy(chainId: string, userId: string): Promise<string | null> {
 
     const deployCFG = SAFE_DEPLOYMENTS[chainId];
     const saltNonce = keccak256(toUtf8Bytes(`wallet:${userId}:${GLOBALS.MAIN_SAFE}`))
@@ -138,13 +156,13 @@ export class WalletService {
     ];
 
 
-    const provider = new JsonRpcProvider(deployCFG.rpc, chainId);
+    const provider = new JsonRpcProvider(deployCFG.rpc);
     const signer = new Wallet(GLOBALS.RELAYER_PK, provider);
     const factory = new Contract(deployCFG.factory, createProxyWithCallbackAbi, signer);
 
 
     try {
-      this.logger.log('Sending Safe proxy creation tx...');
+      this.logger.log(`Sending Safe proxy creation tx on ${chainId}...`);
       const tx = await factory.createProxyWithCallback(deployCFG.singleton, initData, saltNonce, ZeroAddress);
       this.logger.log(`Tx sent: ${tx.hash}`);
 
@@ -188,7 +206,7 @@ export class WalletService {
         u.user_id,
         u.email,
         u.girasol_account_id as "accountId",
-        array_agg(w.chain_id) as "chainIds",
+        array_agg(w.chain_id) as "createdChainIds",
         MIN(w.deposit_addr) as address
       FROM users u
       LEFT JOIN wallets w ON u.user_id = w.user_id

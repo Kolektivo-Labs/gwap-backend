@@ -17,7 +17,7 @@ export class WalletServiceController {
     try {
       const result = await this.walletService.addWallet({ email, accountId, userId });
       return {
-        message: 'Success',
+        message: result.address == null || result.errorChainIds.length > 0 ? 'Warning' : 'Success',
         data: result,
       };
     } catch (error) {
