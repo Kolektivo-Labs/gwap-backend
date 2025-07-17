@@ -19,7 +19,6 @@ export class DepositListenerController {
       await this.depositListenerService.syncDeposits();
       await this.depositConfirmationService.confirmDeposits();
       await this.depositSenderService.sendConfirmedDeposits();
-      await this.tokenSweeperService.sweepDeposits();
       return { message: '✅ All steps completed successfully' };
     } catch (error: any) {
       return { message: `❌ Error during listen: ${error.message}` };
