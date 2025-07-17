@@ -13,45 +13,51 @@ type WalletRecord = { deposit_addr: string };
 @Injectable()
 export class DepositFetcherService {
   private readonly logger = new Logger(DepositFetcherService.name);
+  private running = false;
 
   constructor(private readonly db: DatabaseService) { }
 
   async syncDeposits() {
-
-
-
-
-    const allNewTransfers: TransfersWithChain[] = [];
-
-
-    const chunkSize = 100;
-    for (const chainId of SUPPORTED_CHAIN_IDS) {
-
-      const fromBlockHex = await this.getLastSyncedBlockNumber(chainId);
-      const wallets = await this.getWallets(chainId);
-
-      for (let i = 0; i < wallets.length; i += chunkSize) {
-        const chunk = wallets.slice(i, i + chunkSize).map(w => w.deposit_addr.toLowerCase());
-
-        const printableList = printableAddressList(chunk);
-        this.logger.debug(
-          `Syncing deposits after block: ${fromBlockHex} for chain ${chainId}:\n${printableList.join('\n')}`
-        );
-        const transfers = await this.fetchTransfers(chainId, chunk, fromBlockHex);
-
-        this.logger.debug(`Transfers fetched: ${transfers.length}`);
-        if (transfers.length === 0) continue;
-
-        const newTransfers = await this.filterNewTransfers(chainId, transfers);
-        allNewTransfers.push(...newTransfers);
-      }
+    if (this.running) {
+      console.log('⏳ Already running. Skipping...');
+      return;
     }
+    this.running = true;
 
-    if (allNewTransfers.length > 0)
-      await this.insertDeposits(allNewTransfers);
+    try {
+      const allNewTransfers: TransfersWithChain[] = [];
 
-    this.logger.log(`Total inserted ${allNewTransfers.length} new deposits`);
 
+      const chunkSize = 100;
+      for (const chainId of SUPPORTED_CHAIN_IDS) {
+
+        const fromBlockHex = await this.getLastSyncedBlockNumber(chainId);
+        const wallets = await this.getWallets(chainId);
+
+        for (let i = 0; i < wallets.length; i += chunkSize) {
+          const chunk = wallets.slice(i, i + chunkSize).map(w => w.deposit_addr.toLowerCase());
+
+          const printableList = printableAddressList(chunk);
+          this.logger.debug(
+            `Syncing deposits after block: ${fromBlockHex} for chain ${chainId}:\n${printableList.join('\n')}`
+          );
+          const transfers = await this.fetchTransfers(chainId, chunk, fromBlockHex);
+
+          this.logger.debug(`Transfers fetched: ${transfers.length}`);
+          if (transfers.length === 0) continue;
+
+          const newTransfers = await this.filterNewTransfers(chainId, transfers);
+          allNewTransfers.push(...newTransfers);
+        }
+      }
+
+      if (allNewTransfers.length > 0)
+        await this.insertDeposits(allNewTransfers);
+
+      this.logger.log(`Total inserted ${allNewTransfers.length} new deposits`);
+    } finally {
+      this.running = false;
+    }
   }
 
   private async getWallets(chainId: string): Promise<WalletRecord[]> {

@@ -35,6 +35,7 @@ export const GLOBALS = {
   ALCHEMY_PRIVATE_KEY: env('ALCHEMY_PRIVATE_KEY')!,
   MAIN_SAFE: env('MAIN_SAFE')!,
   RELAYER_PK: env('RELAYER_PK')!,
+  SEND_URL: env('SEND_URL')!,
 
 
 }

@@ -8,8 +8,9 @@ import {
   SafeTransaction,
 } from '@safe-global/safe-core-sdk-types';
 import { getTokenDecimals, GLOBALS } from 'apps/api/src/common/envs';
-import { getRPCFromChain } from 'apps/api/src/common/chains';
+import { getRPCFromChain, SUPPORTED_CHAIN_IDS } from 'apps/api/src/common/chains';
 import { Deposit } from '../common/deposit.entity';
+import { DatabaseService } from 'apps/api/src/common/database.service';
 
 
 /* ——— ERC-20 & Gnosis-Safe ABIs ——— */
@@ -28,11 +29,50 @@ const APPROVE_IFACE = new ethers.Interface(['function approveHash(bytes32)']);
 @Injectable()
 export class TokenSweeperService {
   private logger = new Logger(TokenSweeperService.name);
+  private running = false;
 
-
-  constructor() {
+  constructor(private readonly db: DatabaseService,) {
   }
 
+  private readonly SQL = {
+    selectByStatus: `
+    SELECT  tx_hash,  chain_id, deposit_addr , amount_usd,erc20_address,
+  gas_used, block_number,  confirmed,  settled, settlement_hash, swept 
+    FROM deposits 
+    WHERE confirmed = $2 AND swept = $3 AND chain_id = $1
+  `,
+    updateSwept: `
+    UPDATE deposits 
+    SET swept = true, settlement_hash = $2 
+    WHERE tx_hash = $1 AND chain_id = $3 
+    RETURNING tx_hash
+  `
+  };
+
+
+
+  async sweepDeposits(): Promise<void> {
+    if (this.running) {
+      console.log('⏳ DepositFetcherService is already running. Skipping...');
+      return;
+    }
+
+    this.running = true;
+    try {
+      for (const chainId of SUPPORTED_CHAIN_IDS) {
+
+        await this.sweepFromChain(chainId)
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+  private async getDepositsByStatus(confirmed: boolean, swept: boolean, chainId: string): Promise<Deposit[]> {
+    return (await this.db.pool.query<Deposit>(
+      this.SQL.selectByStatus, [chainId, confirmed, swept])).rows;
+
+
+  }
 
   async sweepProxySafe(deposit: Deposit): Promise<string | null> {
 
@@ -41,7 +81,7 @@ export class TokenSweeperService {
     const decimals = getTokenDecimals(erc20Address)
     const address = deposit.deposit_addr
 
-    
+
     const rpcURL = getRPCFromChain(chainId)
     const provider = new ethers.JsonRpcProvider(rpcURL);
     const signer = new ethers.Wallet(GLOBALS.RELAYER_PK!, provider);
@@ -152,5 +192,30 @@ export class TokenSweeperService {
     const rc = await (sent2.transactionResponse as ethers.TransactionResponse).wait();
     this.logger.log(`[${proxySafe}] sweep complete – tx ${rc!.hash}`);
     return rc!.hash;
+  }
+  async sweepFromChain(chainId: string) {
+    const unswept = await this.getDepositsByStatus(true, false, chainId)
+
+    let sweptCount = 0;
+    for (const row of unswept) {
+      try {
+        const settlementHash = await this.sweepProxySafe(row);
+
+        const update = await this.db.pool.query(
+          this.SQL.updateSwept,
+          [row.tx_hash, settlementHash ?? null, row.chain_id],
+        );
+
+        if (update.rowCount === 0) {
+          this.logger.warn(`UPDATE returned 0 rows for ${row.tx_hash}`);
+        } else {
+          sweptCount += settlementHash ? 1 : 0;
+        }
+      } catch (err) {
+        this.logger.error(`Sweep/update failed for ${row.tx_hash}: ${err.message}`);
+      }
+    }
+    this.logger.log(`Swept deposits: ${sweptCount} for chain: ${chainId}`);
+
   }
 }

@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import 'dotenv/config';
 import { DatabaseService } from '../../../api/src/common/database.service';
-import { TokenSweeperService } from '../token-sweep/token-sweep.service';
 import { createAlchemy, SUPPORTED_CHAIN_IDS } from 'apps/api/src/common/chains';
 import { Deposit } from '../common/deposit.entity';
 
@@ -9,9 +8,9 @@ import { Deposit } from '../common/deposit.entity';
 @Injectable()
 export class DepositConfirmationService {
     private readonly logger = new Logger(DepositConfirmationService.name);
-
+    private running = false;
     constructor(private readonly db: DatabaseService,
-        private readonly sweeper: TokenSweeperService,
+
     ) { }
 
 
@@ -27,20 +26,22 @@ export class DepositConfirmationService {
     SET confirmed = true, gas_used = $1 
     WHERE tx_hash = $2 AND chain_id = $3
   `,
-        updateSwept: `
-    UPDATE deposits 
-    SET swept = true, settlement_hash = $2 
-    WHERE tx_hash = $1 AND chain_id = $3 
-    RETURNING tx_hash
-  `
     };
+
+    
     async confirmDeposits(): Promise<void> {
-
-        for (const chainId of SUPPORTED_CHAIN_IDS) {
-            await this.confirmDepositsByChain(chainId, 3)
-            await this.sweepFromChain(chainId)
+        if (this.running) {
+            console.log('⏳ Already running. Skipping...');
+            return;
         }
-
+        this.running = true;
+        try {
+            for (const chainId of SUPPORTED_CHAIN_IDS) {
+                await this.confirmDepositsByChain(chainId, 3)
+            }
+        } finally {
+            this.running = false;
+        }
     }
 
     private async getDepositsByStatus(confirmed: boolean, swept: boolean, chainId: string): Promise<Deposit[]> {
@@ -97,29 +98,5 @@ export class DepositConfirmationService {
 
     }
 
-    async sweepFromChain(chainId: string) {
-        const unswept = await this.getDepositsByStatus(true, false, chainId)
 
-        let sweptCount = 0;
-        for (const row of unswept) {
-            try {
-                const settlementHash = await this.sweeper.sweepProxySafe(row);
-
-                const update = await this.db.pool.query(
-                    this.SQL.updateSwept,
-                    [row.tx_hash, settlementHash ?? null, row.chain_id],
-                );
-
-                if (update.rowCount === 0) {
-                    this.logger.warn(`UPDATE returned 0 rows for ${row.tx_hash}`);
-                } else {
-                    sweptCount += settlementHash ? 1 : 0;
-                }
-            } catch (err) {
-                this.logger.error(`Sweep/update failed for ${row.tx_hash}: ${err.message}`);
-            }
-        }
-        this.logger.log(`Swept deposits: ${sweptCount} for chain: ${chainId}`);
-
-    }
 }
