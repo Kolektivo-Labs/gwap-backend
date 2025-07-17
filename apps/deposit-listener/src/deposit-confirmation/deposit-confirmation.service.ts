@@ -57,10 +57,6 @@ export class DepositConfirmationService {
         const res = await this.getDepositsByStatus(false, false, chainId)
 
 
-        if (res.length === 0) {
-            this.logger.log(`No unconfirmed deposits found for chain ${chainId}.`);
-            return;
-        }
 
         let confirmedCount = 0;
 
@@ -95,7 +91,7 @@ export class DepositConfirmationService {
                 this.logger.error(`Error checking tx ${row.tx_hash} of address ${row.deposit_addr}: ${err.message}`);
             }
         }
-        this.logger.log(`Marked ${confirmedCount} deposits as confirmed.`);
+        this.logger.log(`Marked ${confirmedCount} deposits as confirmed for chain: ${chainId}.`);
 
 
 
@@ -123,7 +119,7 @@ export class DepositConfirmationService {
                 this.logger.error(`Sweep/update failed for ${row.tx_hash}: ${err.message}`);
             }
         }
-        this.logger.log(`★ swept: ${sweptCount}`);
+        this.logger.log(`Swept deposits: ${sweptCount} for chain: ${chainId}`);
 
     }
 }

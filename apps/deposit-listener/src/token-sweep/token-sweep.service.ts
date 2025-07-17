@@ -41,7 +41,7 @@ export class TokenSweeperService {
     const decimals = getTokenDecimals(erc20Address)
     const address = deposit.deposit_addr
 
-
+    
     const rpcURL = getRPCFromChain(chainId)
     const provider = new ethers.JsonRpcProvider(rpcURL);
     const signer = new ethers.Wallet(GLOBALS.RELAYER_PK!, provider);
