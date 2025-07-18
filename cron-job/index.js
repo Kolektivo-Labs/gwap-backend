@@ -7,16 +7,23 @@ const MAX_INTERVAL_MS = 2_147_483_647n; // int32 max en BigInt
 const MIN_INTERVAL_MS = 1000n;
 
 let intervalRaw = process.env.INTERVAL_MS || '60000';
+let INTERVAL_MS; // ✅ declaración necesaria
 
 if (!API_URL) {
   console.error('❌ Missing API_URL in .env file');
   process.exit(1);
 }
 
-const intervalBigInt = BigInt(intervalRaw);
+let intervalBigInt;
+try {
+  intervalBigInt = BigInt(intervalRaw);
+} catch (err) {
+  console.error('❌ INTERVAL_MS must be a valid integer string');
+  process.exit(1);
+}
 
-if (intervalBigInt < 1000) {
-  console.error('❌ Invalid INTERVAL_MS in .env file. Must be >= 1000');
+if (intervalBigInt < MIN_INTERVAL_MS) {
+  console.error(`❌ Invalid INTERVAL_MS in .env file. Must be >= ${MIN_INTERVAL_MS}`);
   process.exit(1);
 }
 
