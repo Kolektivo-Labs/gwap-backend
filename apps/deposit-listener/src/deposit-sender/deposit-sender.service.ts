@@ -27,7 +27,7 @@ export class DepositSenderService {
         email: string;
         account: string;
       }>(`
-      SELECT d.tx_hash, d.deposit_addr, d.amount_usd, d.gas_used, u.email, u.girasol_account_id AS account
+      SELECT d.tx_hash, d.deposit_addr, d.amount_usd, d.gas_used, d.erc20_address AS erc20,d.chain_id , d.settlement_hash , d.block_number,  u.email, u.girasol_account_id AS account
       FROM deposits d
       JOIN wallets w ON d.deposit_addr = w.deposit_addr AND d.chain_id = w.chain_id
       JOIN users u ON w.user_id = u.user_id
@@ -42,6 +42,11 @@ export class DepositSenderService {
       for (const row of res.rows) {
 
         const payload = {
+          txHash: row.tx_hash,
+          blockNumber: row.block_number,
+          erc20: row.erc20,
+          chainId: row.chain_id,
+          sweepHash: row.settlement_hash,
           email: row.email,
           account: row.account,
           amount: Number(row.amount_usd),
