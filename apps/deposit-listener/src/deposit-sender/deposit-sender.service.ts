@@ -69,6 +69,7 @@ WHERE d.confirmed = true AND d.settled = false;
   private buildPayload(row: DepositRow): Record<string, any> {
     const payload = {
       ...row,
+      amount: Number(row.amount),
       currencyCode: 840,
       merchant: 'CFX',
       paymentType: 'crypto',
