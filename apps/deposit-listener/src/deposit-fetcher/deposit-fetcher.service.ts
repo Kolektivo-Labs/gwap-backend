@@ -132,13 +132,14 @@ export class DepositFetcherService {
         '0',
         false,
         false,
-        t.rawContract.address
+        t.rawContract.address,
+        false
       ]);
 
     if (rows.length === 0) return;
 
     const query = format(
-      `INSERT INTO deposits (tx_hash, deposit_addr, chain_id, amount_usd, block_number, gas_used, confirmed, settled,erc20_address)
+      `INSERT INTO deposits (tx_hash, deposit_addr, chain_id, amount_usd, block_number, gas_used, confirmed, settled,erc20_address, swept)
    VALUES %L`,
       rows
     );

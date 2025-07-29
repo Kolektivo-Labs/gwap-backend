@@ -19,7 +19,7 @@ export class DepositConfirmationService {
     SELECT  tx_hash,  chain_id, deposit_addr , amount_usd,erc20_address,
   gas_used, block_number,  confirmed,  settled, settlement_hash, swept 
     FROM deposits 
-    WHERE confirmed = $2 AND swept = $3 AND chain_id = $1
+    WHERE chain_id = $1 AND confirmed = $2 AND swept = $3 
   `,
         updateConfirmed: `
     UPDATE deposits 
@@ -56,7 +56,7 @@ export class DepositConfirmationService {
         const alchemy = createAlchemy(chainId);
         const currentBlock = await alchemy.core.getBlockNumber();
         const res = await this.getDepositsByStatus(false, false, chainId)
-
+console.log(`Checking ${res.length} deposits for confirmations on chain ${chainId}...`);
 
 
         let confirmedCount = 0;
