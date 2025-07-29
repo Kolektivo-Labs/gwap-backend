@@ -15,7 +15,6 @@ interface DepositRow {
   gasFee: number;
 }
 
-
 @Injectable()
 export class DepositSenderService {
   private readonly logger = new Logger(DepositSenderService.name);
