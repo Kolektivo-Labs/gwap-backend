@@ -126,17 +126,17 @@ export class TokenSweeperService {
     const normalizedBalance = ethers.formatUnits(totalBalance, decimals)
     const sweepAmount = parseFloat(normalizedBalance) < parseFloat(deposit.amount_usd) ? totalBalance : parseUnits(deposit.amount_usd, decimals)
 
-    this.logger.log(`[${proxySafe}] sweeping ${normalizedBalance} USD → MAIN_SAFE`,);
+    this.logger.log(`[${proxySafe}] sweeping ${normalizedBalance} USD → SWEEP_SAFE`,);
     /* ——— Build the inner Safe tx (ERC20 transfer) ——— */
 
 
     this.logger.log(
-      `[${GLOBALS.MAIN_SAFE}] Receiving ${normalizedBalance} USD`,
+      `[${GLOBALS.SWEEP_SAFE}] Receiving ${normalizedBalance} USD`,
     );
     const transferTx: MetaTransactionData = {
       to: erc20Address,
       value: '0',
-      data: ERC20.encodeFunctionData('transfer', [GLOBALS.MAIN_SAFE, sweepAmount]),
+      data: ERC20.encodeFunctionData('transfer', [GLOBALS.SWEEP_SAFE, sweepAmount]),
       operation: OperationType.Call,
     };
 
@@ -233,7 +233,7 @@ export class TokenSweeperService {
       const transferTx: MetaTransactionData = {
         to: erc20Address,
         value: '0',
-        data: ERC20.encodeFunctionData('transfer', [GLOBALS.MAIN_SAFE, amount]),
+        data: ERC20.encodeFunctionData('transfer', [GLOBALS.SWEEP_SAFE, amount]),
         operation: OperationType.Call,
       };
 

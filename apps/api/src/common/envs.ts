@@ -34,6 +34,7 @@ export const GLOBALS = {
 
   ALCHEMY_PRIVATE_KEY: env('ALCHEMY_PRIVATE_KEY')!,
   MAIN_SAFE: env('MAIN_SAFE')!,
+  SWEEP_SAFE: env('SWEEP_SAFE')!,
   RELAYER_PK: env('RELAYER_PK')!,
   SEND_URL: env('SEND_URL')!,
   SWEEP_BATCH_SIZE: process.env.SWEEP_BATCH_SIZE ? Number(process.env.SWEEP_BATCH_SIZE) : 20,
