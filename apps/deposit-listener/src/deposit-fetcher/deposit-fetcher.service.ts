@@ -29,7 +29,7 @@ export class DepositFetcherService {
 
 
       const chunkSize = 100;
-      for (const chainId of SUPPORTED_CHAIN_IDS) {
+      await Promise.all(SUPPORTED_CHAIN_IDS.map(async (chainId) => {
 
         const fromBlockHex = await this.getLastSyncedBlockNumber(chainId);
         const wallets = await this.getWallets(chainId);
@@ -49,7 +49,7 @@ export class DepositFetcherService {
           const newTransfers = await this.filterNewTransfers(chainId, transfers);
           allNewTransfers.push(...newTransfers);
         }
-      }
+      }));
 
       if (allNewTransfers.length > 0)
         await this.insertDeposits(allNewTransfers);
