@@ -193,6 +193,104 @@ export class TokenSweeperService {
     this.logger.log(`[${proxySafe}] sweep complete – tx ${rc!.hash}`);
     return rc!.hash;
   }
+
+
+  public async batchSweepFromProxySafe(deposits: Deposit[]): Promise<string | null> {
+    if (deposits.length === 0) return null;
+
+    const chainId = deposits[0].chain_id.toString();
+    const provider = new ethers.JsonRpcProvider(getRPCFromChain(chainId));
+    const signer = new ethers.Wallet(GLOBALS.RELAYER_PK!, provider);
+    const ethAdapter = new EthersAdapter({ ethers, signerOrProvider: signer });
+
+    const mainSafeSdk = await Safe.create({
+      ethAdapter,
+      safeAddress: GLOBALS.MAIN_SAFE,
+    });
+
+    const contractSig =
+      '0x' +
+      GLOBALS.MAIN_SAFE.toLowerCase().replace('0x', '').padStart(64, '0') +
+      '0'.repeat(64) +
+      '01';
+
+    const metaTxs: MetaTransactionData[] = [];
+
+    for (const deposit of deposits) {
+      const proxySafe = ethers.getAddress(deposit.deposit_addr);
+      const erc20Address = deposit.erc20_address;
+      const decimals = getTokenDecimals(erc20Address);
+      const erc20 = new ethers.Contract(erc20Address, ERC20, provider);
+
+      const balance: bigint = await erc20.balanceOf(proxySafe);
+      if (balance === 0n) continue;
+
+      const amount = parseFloat(ethers.formatUnits(balance, decimals)) < parseFloat(deposit.amount_usd)
+        ? balance
+        : parseUnits(deposit.amount_usd, decimals);
+
+      // Transfer TX en proxy
+      const transferTx: MetaTransactionData = {
+        to: erc20Address,
+        value: '0',
+        data: ERC20.encodeFunctionData('transfer', [GLOBALS.MAIN_SAFE, amount]),
+        operation: OperationType.Call,
+      };
+
+      const proxyAdapter = new EthersAdapter({ ethers, signerOrProvider: signer });
+      const proxySdk = await Safe.create({
+        ethAdapter: proxyAdapter,
+        safeAddress: proxySafe,
+      });
+
+      const safeTx = await proxySdk.createTransaction({ transactions: [transferTx] });
+      const hash = await proxySdk.getTransactionHash(safeTx);
+
+      // 1. Approve Hash
+      metaTxs.push({
+        to: proxySafe,
+        value: '0',
+        data: APPROVE_IFACE.encodeFunctionData('approveHash', [hash]),
+        operation: OperationType.Call,
+      });
+
+      // 2. Exec Transaction en el proxy
+      const d = safeTx.data;
+      metaTxs.push({
+        to: proxySafe,
+        value: '0',
+        data: SAFE_EXEC.encodeFunctionData('execTransaction', [
+          d.to,
+          d.value,
+          d.data,
+          d.operation,
+          0, 0, 0,
+          ethers.ZeroAddress,
+          ethers.ZeroAddress,
+          contractSig,
+        ]),
+        operation: OperationType.Call,
+      });
+    }
+
+    if (metaTxs.length === 0) return null;
+
+    const safeTransaction = await mainSafeSdk.createTransaction({ transactions: metaTxs });
+
+    try {
+      await mainSafeSdk.signTransaction(safeTransaction);
+      const txResp = await mainSafeSdk.executeTransaction(safeTransaction);
+      await provider.waitForTransaction(txResp.hash, 1);
+      return txResp.hash;
+    } catch (e) {
+      this.logger.error('Error during batch sweep', e);
+      throw e;
+    }
+  }
+
+
+
+
   async sweepFromChain(chainId: string) {
     const unswept = await this.getDepositsByStatus(true, false, chainId)
 
