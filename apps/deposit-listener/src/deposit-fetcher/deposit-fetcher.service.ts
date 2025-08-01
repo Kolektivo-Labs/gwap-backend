@@ -6,6 +6,8 @@ import { DatabaseService } from '../../../api/src/common/database.service';
 import { createAlchemy, SUPPORTED_CHAIN_IDS, TransfersWithChain } from 'apps/api/src/common/chains';
 import { GLOBALS } from 'apps/api/src/common/envs';
 import { printableAddressList } from 'apps/api/src/common/utils';
+import pLimit from 'p-limit';
+
 
 type WalletRecord = { deposit_addr: string };
 
@@ -26,35 +28,62 @@ export class DepositFetcherService {
 
     try {
       const allNewTransfers: TransfersWithChain[] = [];
+      const chunkSize = GLOBALS.WALLET_CHUNK_SIZE;
+      const limit = pLimit(GLOBALS.WALLET_CHUNK_CONCURRENCY);
 
 
-      const chunkSize = 100;
       await Promise.all(SUPPORTED_CHAIN_IDS.map(async (chainId) => {
-
+        const startChain = Date.now();
         const fromBlockHex = await this.getLastSyncedBlockNumber(chainId);
         const wallets = await this.getWallets(chainId);
-
+        const chunks: string[][] = [];
         for (let i = 0; i < wallets.length; i += chunkSize) {
-          const chunk = wallets.slice(i, i + chunkSize).map(w => w.deposit_addr.toLowerCase());
-
-          const printableList = printableAddressList(chunk);
-          this.logger.debug(
-            `Syncing deposits after block: ${fromBlockHex} for chain ${chainId}:\n${printableList.join('\n')}`
-          );
-          const transfers = await this.fetchTransfers(chainId, chunk, fromBlockHex);
-
-          this.logger.debug(`Transfers fetched: ${transfers.length}`);
-          if (transfers.length === 0) continue;
-
-          const newTransfers = await this.filterNewTransfers(chainId, transfers);
-          allNewTransfers.push(...newTransfers);
+          const chunk: string[] = wallets.slice(i, i + chunkSize).map((w) => w.deposit_addr.toLowerCase());
+          chunks.push(chunk);
         }
+        this.logger.log(`[${chainId}] 🔍 Checking ${wallets.length} wallets in ${chunks.length} chunks`);
+
+        const transfersChunks = await Promise.all(
+          chunks.map((chunk, chunkIndex) =>
+            limit(async () => {
+              const startChunk = Date.now();
+
+              this.logger.debug(`[${chainId}] 🧩 Chunk #${chunkIndex + 1} (${chunk.length} wallets)`);
+
+              const printableList = printableAddressList(chunk);
+              this.logger.debug(`[${chainId}] → Wallets:\n${printableList.join('\n')}`);
+
+
+              const transfers = await this.fetchTransfers(chainId, chunk, fromBlockHex);
+              this.logger.debug(`[${chainId}] → 📦 Transfers fetched: ${transfers.length}`);
+
+
+              if (transfers.length === 0) {
+                this.logger.debug(`[${chainId}] → ⏱ Chunk #${chunkIndex + 1} duration: ${Date.now() - startChunk} ms (no transfers)`);
+                return [];
+              }
+
+              const newTransfers = await this.filterNewTransfers(chainId, transfers);
+              this.logger.debug(`[${chainId}] → ✨ New transfers: ${newTransfers.length}`);
+              this.logger.debug(`[${chainId}] → ⏱ Chunk #${chunkIndex + 1} duration: ${Date.now() - startChunk} ms`);
+
+              return newTransfers;
+            })
+          )
+        );
+
+        const chainTransfers = transfersChunks.flat();
+        this.logger.log(`[${chainId}] ✅ Total new transfers: ${chainTransfers.length}`);
+        this.logger.log(`[${chainId}] ⏱ Duration: ${Date.now() - startChain} ms`);
+
+        allNewTransfers.push(...chainTransfers);
       }));
 
-      if (allNewTransfers.length > 0)
+      if (allNewTransfers.length > 0) {
         await this.insertDeposits(allNewTransfers);
+      }
 
-      this.logger.log(`Total inserted ${allNewTransfers.length} new deposits`);
+      this.logger.log(`🧾 Total inserted: ${allNewTransfers.length} deposits`);
     } finally {
       this.running = false;
     }
@@ -75,29 +104,27 @@ export class DepositFetcherService {
   }
 
   private async fetchTransfers(chainId: string, addresses: string[], after: string): Promise<TransfersWithChain[]> {
-
-
-
     const alchemy = createAlchemy(chainId);
-
     this.logger.debug(`Fetching transfers after : ${after} for chain: ${chainId}`);
 
+    const limit = pLimit(GLOBALS.ADDRESS_FETCH_CONCURRENCY);
+
     const results = await Promise.all(
-      addresses.map(async (address) => {
-
-        const result = await alchemy.core.getAssetTransfers({
-          fromBlock: after as `0x${string}`,
-          toAddress: address,
-          excludeZeroValue: true,
-          category: [AssetTransfersCategory.ERC20],
-          contractAddresses: GLOBALS.ERC20_TOKEN_ADDRESSES[chainId],
-        });
-
-        return result.transfers;
-      })
+      addresses.map((address) =>
+        limit(async () => {
+          const result = await alchemy.core.getAssetTransfers({
+            fromBlock: after as `0x${string}`,
+            toAddress: address,
+            excludeZeroValue: true,
+            category: [AssetTransfersCategory.ERC20],
+            contractAddresses: GLOBALS.ERC20_TOKEN_ADDRESSES[chainId],
+          });
+          return result.transfers;
+        })
+      )
     );
 
-    return results.flat().map((x) => { return { ...x, chainId } });
+    return results.flat().map((x) => ({ ...x, chainId }));
   }
 
   private async filterNewTransfers(chainId: string, transfers: TransfersWithChain[]): Promise<TransfersWithChain[]> {
