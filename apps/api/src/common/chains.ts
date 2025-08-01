@@ -13,7 +13,7 @@ export const AVALANCHE_CHAIN_ID = '43114';
 export const UNICHAIN_CHAIN_ID = '130';
 
 
-export const SUPPORTED_CHAIN_IDS = [
+export const DEPLOY_CHAIN_IDS = [
     OP_CHAIN_ID,
     ETH_CHAIN_ID,
     CELO_CHAIN_ID,
@@ -22,6 +22,13 @@ export const SUPPORTED_CHAIN_IDS = [
     BASE_CHAIN_ID,
     AVALANCHE_CHAIN_ID,
     UNICHAIN_CHAIN_ID
+];
+
+
+export const SUPPORTED_CHAIN_IDS = [
+    OP_CHAIN_ID,
+    ETH_CHAIN_ID,
+    CELO_CHAIN_ID,
 ];
 
 
@@ -37,16 +44,16 @@ export function getAlchemyNetworkFromChain(chainId: string) {
             return Network.ETH_MAINNET
         case CELO_CHAIN_ID:
             return Network.CELO_MAINNET
-        case ARBITRUM_CHAIN_ID:
-            return Network.ARB_MAINNET;
-        case POLYGON_CHAIN_ID:
-            return Network.MATIC_MAINNET;
-        case BASE_CHAIN_ID:
-            return Network.BASE_MAINNET;
-        case AVALANCHE_CHAIN_ID:
-            return Network.AVAX_MAINNET;
-        case UNICHAIN_CHAIN_ID:
-            return Network.UNICHAIN_MAINNET;
+        // case ARBITRUM_CHAIN_ID:
+        //     return Network.ARB_MAINNET;
+        // case POLYGON_CHAIN_ID:
+        //     return Network.MATIC_MAINNET;
+        // case BASE_CHAIN_ID:
+        //     return Network.BASE_MAINNET;
+        // case AVALANCHE_CHAIN_ID:
+        //     return Network.AVAX_MAINNET;
+        // case UNICHAIN_CHAIN_ID:
+        //     return Network.UNICHAIN_MAINNET;
         default:
             return undefined;
     }

@@ -12,7 +12,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AddWalletRequestDto, AddWalletResponseDto } from './dto/add-wallet.dto';
 import { MetricsService } from './metrics.service';
 import { SAFE_DEPLOYMENTS } from './common/safe-deployment';
-import { SUPPORTED_CHAIN_IDS } from 'apps/api/src/common/chains';
+import { DEPLOY_CHAIN_IDS } from 'apps/api/src/common/chains';
 import { GLOBALS } from 'apps/api/src/common/envs';
 import { DatabaseService } from 'apps/api/src/common/database.service';
 
@@ -37,7 +37,7 @@ export class WalletService {
 
     const existingWallet = await this.getWalletByUserId(userId)
 
-    if (existingWallet != null && existingWallet.createdChainIds.length == SUPPORTED_CHAIN_IDS.length) {
+    if (existingWallet != null && existingWallet.createdChainIds.length == DEPLOY_CHAIN_IDS.length) {
       this.logger.error(`Tryed to re-create a wallet for the user ${userId}`);
       throw new Error('User already has a wallet');
     }

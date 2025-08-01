@@ -3,7 +3,7 @@ import {
     getSafeSingletonDeployment,
     getFallbackHandlerDeployment,
 } from '@safe-global/safe-deployments';
-import { getRPCFromChain, SUPPORTED_CHAIN_IDS } from 'apps/api/src/common/chains';
+import { getRPCFromChain, DEPLOY_CHAIN_IDS } from 'apps/api/src/common/chains';
 
 
 
@@ -18,7 +18,7 @@ export type SafeDeploymentInfo = {
 
 
 export const SAFE_DEPLOYMENTS: Record<string, SafeDeploymentInfo> = Object.fromEntries(
-    SUPPORTED_CHAIN_IDS.map((chainId) => {
+    DEPLOY_CHAIN_IDS.map((chainId) => {
         const proxyFactory = getProxyFactoryDeployment({ network: chainId });
         const singleton = getSafeSingletonDeployment({ network: chainId });
         const fallbackHandler = getFallbackHandlerDeployment({ network: chainId });
