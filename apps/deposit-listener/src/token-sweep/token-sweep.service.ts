@@ -13,7 +13,7 @@ import { Deposit } from '../common/deposit.entity';
 import { DatabaseService } from 'apps/api/src/common/database.service';
 
 
-/* ——— ERC-20 & Gnosis-Safe ABIs ——— */
+
 const ERC20 = new ethers.Interface([
   'function balanceOf(address) view returns (uint256)',
   'function transfer(address,uint256) returns (bool)',
@@ -229,7 +229,7 @@ export class TokenSweeperService {
         ? balance
         : parseUnits(deposit.amount_usd, decimals);
 
-      // Transfer TX en proxy
+     
       const transferTx: MetaTransactionData = {
         to: erc20Address,
         value: '0',
@@ -246,7 +246,7 @@ export class TokenSweeperService {
       const safeTx = await proxySdk.createTransaction({ transactions: [transferTx] });
       const hash = await proxySdk.getTransactionHash(safeTx);
 
-      // 1. Approve Hash
+      
       metaTxs.push({
         to: proxySafe,
         value: '0',
@@ -254,7 +254,7 @@ export class TokenSweeperService {
         operation: OperationType.Call,
       });
 
-      // 2. Exec Transaction en el proxy
+    
       const d = safeTx.data;
       metaTxs.push({
         to: proxySafe,
@@ -288,32 +288,71 @@ export class TokenSweeperService {
     }
   }
 
-
-
-
   async sweepFromChain(chainId: string) {
-    const unswept = await this.getDepositsByStatus(true, false, chainId)
+    const unswept = await this.getDepositsByStatus(true, false, chainId);
+    const batchSize = GLOBALS.SWEEP_BATCH_SIZE; 
 
     let sweptCount = 0;
-    for (const row of unswept) {
+
+    for (let i = 0; i < unswept.length; i += batchSize) {
+      const batch = unswept.slice(i, i + batchSize);
+
       try {
-        const settlementHash = await this.sweepProxySafe(row);
-
-        const update = await this.db.pool.query(
-          this.SQL.updateSwept,
-          [row.tx_hash, settlementHash ?? null, row.chain_id],
-        );
-
-        if (update.rowCount === 0) {
-          this.logger.warn(`UPDATE returned 0 rows for ${row.tx_hash}`);
-        } else {
-          sweptCount += settlementHash ? 1 : 0;
+        const txHash = await this.batchSweepFromProxySafe(batch);
+        if (!txHash) {
+          this.logger.warn(`Batch [${i}–${i + batch.length - 1}] skipped (no balance)`);
+          continue;
         }
+
+   
+        for (const deposit of batch) {
+          const result = await this.db.pool.query(
+            this.SQL.updateSwept,
+            [deposit.tx_hash, txHash, deposit.chain_id],
+          );
+
+          if (result.rowCount === 0) {
+            this.logger.warn(`UPDATE returned 0 rows for ${deposit.tx_hash}`);
+          } else {
+            sweptCount++;
+          }
+        }
+
+        this.logger.log(`✅ Swept batch of ${batch.length} deposits – tx ${txHash}`);
+
       } catch (err) {
-        this.logger.error(`Sweep/update failed for ${row.tx_hash}: ${err.message}`);
+        this.logger.error(`Sweep batch failed [${i}–${i + batch.length - 1}]: ${err.message}`);
       }
     }
-    this.logger.log(`Swept deposits: ${sweptCount} for chain: ${chainId}`);
 
+    this.logger.log(`✅ Total swept deposits: ${sweptCount} for chain: ${chainId}`);
   }
+
+
+
+  // async sweepFromChain(chainId: string) {
+  //   const unswept = await this.getDepositsByStatus(true, false, chainId)
+
+  //   let sweptCount = 0;
+  //   for (const row of unswept) {
+  //     try {
+  //       const settlementHash = await this.sweepProxySafe(row);
+
+  //       const update = await this.db.pool.query(
+  //         this.SQL.updateSwept,
+  //         [row.tx_hash, settlementHash ?? null, row.chain_id],
+  //       );
+
+  //       if (update.rowCount === 0) {
+  //         this.logger.warn(`UPDATE returned 0 rows for ${row.tx_hash}`);
+  //       } else {
+  //         sweptCount += settlementHash ? 1 : 0;
+  //       }
+  //     } catch (err) {
+  //       this.logger.error(`Sweep/update failed for ${row.tx_hash}: ${err.message}`);
+  //     }
+  //   }
+  //   this.logger.log(`Swept deposits: ${sweptCount} for chain: ${chainId}`);
+
+  // }
 }
