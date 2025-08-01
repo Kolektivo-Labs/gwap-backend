@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { DatabaseService } from '../../../api/src/common/database.service';
 import { GLOBALS } from 'apps/api/src/common/envs';
+import chunk from 'lodash.chunk';
 
 interface DepositRow {
   txHash: string;
@@ -14,6 +15,7 @@ interface DepositRow {
   amount: string;
   gasFee: number;
 }
+
 
 @Injectable()
 export class DepositSenderService {
@@ -37,11 +39,55 @@ export class DepositSenderService {
         return;
       }
 
-      for (const deposit of deposits) {
-        await this.processDeposit(deposit);
+      const chunks = chunk(deposits, 20);
+
+      for (const batch of chunks) {
+        await this.processBatch(batch);
       }
     } finally {
       this.running = false;
+    }
+  }
+
+  private async processBatch(batch: DepositRow[]): Promise<void> {
+    const payload = batch.map((row) => this.buildPayload(row));
+    const client = await this.db.pool.connect();
+
+    try {
+      const response = await axios.post(this.apiUrl, payload, {
+        headers: this.getHeaders(),
+      });
+
+      if (
+        response.status === 201 &&
+        response.data?.statusCode === 201 &&
+        response.data.error === false
+      ) {
+        const promises = batch.map((row) =>
+          client.query(
+            `UPDATE deposits SET settled = true WHERE tx_hash = $1 AND chain_id = $2`,
+            [row.txHash, row.chainId]
+          )
+        );
+        await Promise.all(promises);
+        this.logger.log(`✅ Sent batch of ${batch.length} deposits successfully.`);
+      } else {
+        this.logger.warn(`⚠️ Batch failed validation. Response: ${JSON.stringify(response.data)}`);
+      }
+    } catch (err: any) {
+      if (axios.isAxiosError(err) && err.response) {
+        this.logger.error(`❌ Error sending batch: ${err.message}`);
+        this.logger.error(`Status: ${err.response.status}`);
+        this.logger.error(`Body: ${JSON.stringify(err.response.data)}`);
+      } else {
+        this.logger.error(`❌ Unexpected error in batch: ${err.message}`);
+      }
+    } finally {
+      try {
+        client.release();
+      } catch (e) {
+        this.logger.warn('Failed to release DB client:', e);
+      }
     }
   }
 
@@ -87,38 +133,38 @@ WHERE d.confirmed = true AND d.settled = false;
     };
   }
 
-  private async processDeposit(row: DepositRow): Promise<void> {
-    const payload = this.buildPayload(row);
-    const client = await this.db.pool.connect();
+  // private async processDeposit(row: DepositRow): Promise<void> {
+  //   const payload = this.buildPayload(row);
+  //   const client = await this.db.pool.connect();
 
-    try {
-      const response = await axios.post(this.apiUrl, payload, {
-        headers: this.getHeaders(),
-      });
+  //   try {
+  //     const response = await axios.post(this.apiUrl, payload, {
+  //       headers: this.getHeaders(),
+  //     });
 
-      if (response.status === 201 && response.data?.statusCode === 201 && response.data.error === false) {
-        await client.query(
-          `UPDATE deposits SET settled = true WHERE tx_hash = $1 AND chain_id = $2`,
-          [row.txHash, row.chainId]
-        );
-        this.logger.log(`✅ Sent deposit ${row.txHash} on chain ${row.chainId} successfully.`);
-      } else {
-        this.logger.warn(`⚠️ Deposit ${row.txHash} failed validation. Response: ${JSON.stringify(response.data)}`);
-      }
-    } catch (err: any) {
-      if (axios.isAxiosError(err) && err.response) {
-        this.logger.error(`❌ Error sending deposit ${row.txHash}: ${err.message}`);
-        this.logger.error(`Status: ${err.response.status}`);
-        this.logger.error(`Body: ${JSON.stringify(err.response.data)}`);
-      } else {
-        this.logger.error(`❌ Unexpected error for deposit ${row.txHash}: ${err.message}`);
-      }
-    } finally {
-      try {
-        client.release();
-      } catch (e) {
-        this.logger.warn('Failed to release DB client:', e);
-      }
-    }
-  }
+  //     if (response.status === 201 && response.data?.statusCode === 201 && response.data.error === false) {
+  //       await client.query(
+  //         `UPDATE deposits SET settled = true WHERE tx_hash = $1 AND chain_id = $2`,
+  //         [row.txHash, row.chainId]
+  //       );
+  //       this.logger.log(`✅ Sent deposit ${row.txHash} on chain ${row.chainId} successfully.`);
+  //     } else {
+  //       this.logger.warn(`⚠️ Deposit ${row.txHash} failed validation. Response: ${JSON.stringify(response.data)}`);
+  //     }
+  //   } catch (err: any) {
+  //     if (axios.isAxiosError(err) && err.response) {
+  //       this.logger.error(`❌ Error sending deposit ${row.txHash}: ${err.message}`);
+  //       this.logger.error(`Status: ${err.response.status}`);
+  //       this.logger.error(`Body: ${JSON.stringify(err.response.data)}`);
+  //     } else {
+  //       this.logger.error(`❌ Unexpected error for deposit ${row.txHash}: ${err.message}`);
+  //     }
+  //   } finally {
+  //     try {
+  //       client.release();
+  //     } catch (e) {
+  //       this.logger.warn('Failed to release DB client:', e);
+  //     }
+  //   }
+  // }
 }
